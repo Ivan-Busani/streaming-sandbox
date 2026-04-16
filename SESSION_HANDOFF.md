@@ -8,30 +8,32 @@ Sandbox Android (Kotlin + Compose + Hilt + Media3 ExoPlayer) orientado a OTT: re
 
 ## Fuente de temas (roadmap / checklist)
 
-Esta lista es la referencia de alcance del sandbox; el código actual cubre solo parte (ver secciones siguientes).
+Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un ítem). Así se ve como checklist en cualquier vista previa, con o sin soporte de tareas GFM (`- [ ]`).
 
 ### Gestión de Players
 
-- Configuración y optimización de ExoPlayer, Bitmovin y Castlabs.
+- ☑ Configuración y optimización de ExoPlayer (`ExoPlayerEngine`, métricas básicas, `PlayerView` en Compose)
+- ☐ Configuración y optimización de Bitmovin (solo stub + factory)
+- ☐ Configuración y optimización de Castlabs (solo stub + factory)
 
 ### Reproducción fluida
 
-- Reproducción fluida en protocolos DASH y HLS.
+- ☑ Reproducción fluida en protocolos DASH y HLS (`StreamType` + ExoPlayer; tuning ABR/CDN pendiente)
 
 ### Seguridad (DRM)
 
-- Implementación de protección mediante Widevine.
-- Soluciones multi-DRM para contenido premium.
+- ☐ Implementación de protección mediante Widevine
+- ☐ Soluciones multi-DRM para contenido premium
 
 ### Funciones de TV (OTT)
 
-- Manejo de EPG (guía de canales) y Live TV.
-- Funciones de Timeshift (pausa en vivo) y Catchup (grabaciones).
+- ☐ Manejo de EPG (guía de canales) y Live TV
+- ☐ Timeshift (pausa en vivo) y Catchup (grabaciones)
 
 ### Ecosistema de Casteo
 
-- Integración con Google Cast.
-- Sincronización hacia Chromecast y Smart TVs.
+- ☐ Integración con Google Cast
+- ☐ Sincronización hacia Chromecast y Smart TVs
 
 ## Estructura actual (feature-first)
 

@@ -1,6 +1,7 @@
 package com.mivan.streamingsandbox.feature.player.data
 
 import android.view.View
+import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngine
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,12 @@ import javax.inject.Singleton
 class BitmovinPlayerEngine @Inject constructor() : PlayerEngine {
     private val _state = MutableStateFlow<PlayerEngineState>(PlayerEngineState.Idle)
     override val state: StateFlow<PlayerEngineState> = _state.asStateFlow()
+
+    private val _metrics = MutableStateFlow(PlaybackMetrics())
+    override val metrics: StateFlow<PlaybackMetrics> = _metrics.asStateFlow()
+
+    private var loadStartMs: Long = 0L
+    private var rebufferStartMs: Long? = null
 
     override fun attachView(view: View) {
         TODO("Not yet implemented")

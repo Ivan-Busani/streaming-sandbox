@@ -24,11 +24,23 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField(
+                "String",
+                "WIDEVINE_LICENSE_URL",
+                "\"https://proxy.uat.widevine.com/proxy?video_id=2015_tears&provider=widevine_test\""
+            )
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
+            )
+            buildConfigField(
+                "String",
+                "WIDEVINE_LICENSE_URL",
+                "\"https://proxy.uat.widevine.com/proxy?video_id=2015_tears&provider=widevine_test\""
             )
         }
     }
@@ -37,6 +49,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }

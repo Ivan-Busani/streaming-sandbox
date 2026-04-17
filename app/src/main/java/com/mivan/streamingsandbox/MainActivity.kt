@@ -1,6 +1,7 @@
 package com.mivan.streamingsandbox
 
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
+import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.presentation.PlaybackUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerViewModel
@@ -237,7 +239,7 @@ class MainActivity : ComponentActivity() {
             PlaybackUiState.Ready -> "Ready"
             PlaybackUiState.Playing -> "Playing"
             PlaybackUiState.Ended -> "Ended"
-            is PlaybackUiState.Error -> "Error: ${state.message}"
+            is PlaybackUiState.Error -> "Error de reproducción"
         }
 
         Column(
@@ -248,6 +250,11 @@ class MainActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
+                text = "Total canales: ${uiState.channels.size}",
+                color = Color.White
+            )
+
+            Text(
                 text = "Canal actual: ${uiState.selectedChannel?.name ?: "N/A"}",
                 color = Color.White
             )
@@ -255,12 +262,25 @@ class MainActivity : ComponentActivity() {
                 text = "Estado: $playbackText",
                 color = Color.White
             )
-            Text(
-                text = "Total canales: ${uiState.channels.size}",
-                color = Color.White
-            )
+
+            MetricsSection(metrics = uiState.metrics)
+
+            Log.d("MainActivity", "Playback state: ${uiState.playbackState}")
 
             if (uiState.playbackState is PlaybackUiState.Error) {
+                val errorMessage = (uiState.playbackState).message
+                if (errorMessage.contains("DRM", ignoreCase = true)) {
+                    Text(
+                        text = "Tip: verifica licenseUrl, headers y autorización del contenido.",
+                        color = Color(0xFFFFC107)
+                    )
+                } else {
+                    Text(
+                        text = errorMessage,
+                        color = Color.Red
+                    )
+                }
+
                 Button(
                     onClick = onRetry,
                     modifier = Modifier.fillMaxWidth()
@@ -284,5 +304,32 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    @Composable
+    private fun MetricsSection(metrics: PlaybackMetrics) {
+        val startupText = metrics.startupTimeMs?.let { "${it}ms" } ?: "N/A"
+
+        Text(
+            text = "QoE",
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall
+        )
+        Text(
+            text = "Startup: $startupText",
+            color = Color.White
+        )
+        Text(
+            text = "Rebuffers: ${metrics.rebufferCount}",
+            color = Color.White
+        )
+        Text(
+            text = "Rebuffer total: ${metrics.totalRebufferMs}ms",
+            color = Color.White
+        )
+        Text(
+            text = "Fatal errors: ${metrics.fatalErrorCount}",
+            color = Color.White
+        )
     }
 }

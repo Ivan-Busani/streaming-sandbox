@@ -1,6 +1,7 @@
 package com.mivan.streamingsandbox.feature.player.data
 
 import android.view.View
+import com.mivan.streamingsandbox.feature.player.domain.DrmConfig
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngine
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
@@ -25,7 +26,7 @@ class BitmovinPlayerEngine @Inject constructor() : PlayerEngine {
         TODO("Not yet implemented")
     }
 
-    override fun prepare(url: String, playWhenReady: Boolean, seekToMs: Long) {
+    override fun prepare(channelId: String, url: String, playWhenReady: Boolean, seekToMs: Long, drm: DrmConfig?) {
         _state.value = PlayerEngineState.Error("Bitmovin no integrado aun.")
     }
 

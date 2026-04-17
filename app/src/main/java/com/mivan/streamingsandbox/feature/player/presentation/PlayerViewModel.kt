@@ -1,10 +1,12 @@
 package com.mivan.streamingsandbox.feature.player.presentation
 
+import android.util.Log
 import android.view.View
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.ViewModel
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetChannelsUseCase
+import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineFactory
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
 import com.mivan.streamingsandbox.feature.player.domain.PlayerVendorProvider
@@ -24,7 +26,13 @@ class PlayerViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+
     private val playerEngine = playerEngineFactory.create(playerVendorProvider.currentVendor())
+
+    private companion object {
+        private const val TAG = "PlayerViewModel"
+    }
+    private var lastLoggedMetrics: PlaybackMetrics? = null
 
     init {
         val channels = getChannelsUseCase()
@@ -47,6 +55,7 @@ class PlayerViewModel @Inject constructor(
                 _uiState.update { current ->
                     current.copy(metrics = metrics)
                 }
+                logMetricsIfChanged(metrics)
             }
         }
     }
@@ -87,9 +96,23 @@ class PlayerViewModel @Inject constructor(
 
     private fun loadChannel(channel: Channel, seekToMs: Long) {
         playerEngine.prepare(
+            channelId = channel.id,
             url = channel.url,
             playWhenReady = true,
-            seekToMs = seekToMs
+            seekToMs = seekToMs,
+            drm = channel.drm
+        )
+    }
+
+    private fun logMetricsIfChanged(metrics: PlaybackMetrics) {
+        if (lastLoggedMetrics == metrics) return
+        lastLoggedMetrics = metrics
+        Log.d(
+            TAG,
+            "QoE metrics -> startupMs=${metrics.startupTimeMs}, " +
+                "rebuffers=${metrics.rebufferCount}, " +
+                "rebufferTotalMs=${metrics.totalRebufferMs}," +
+                "fatalErrors=${metrics.fatalErrorCount}"
         )
     }
 

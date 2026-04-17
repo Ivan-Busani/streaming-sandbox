@@ -17,7 +17,13 @@ interface PlayerEngine {
     val metrics: StateFlow<PlaybackMetrics>
 
     fun attachView(view: View)
-    fun prepare(url: String, playWhenReady: Boolean = true, seekToMs: Long = 0L)
+    fun prepare(
+        channelId: String,
+        url: String,
+        playWhenReady: Boolean = true,
+        seekToMs: Long = 0L,
+        drm: DrmConfig? = null
+    )
     fun play()
     fun pause()
     fun currentPositionMs(): Long

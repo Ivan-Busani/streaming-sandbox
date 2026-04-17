@@ -22,7 +22,8 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 
 ### Seguridad (DRM)
 
-- ☐ Implementación de protección mediante Widevine
+- ☑ Base de integración Widevine (dominio + engine + ViewModel)
+- ☐ Flujo completo de licencia Widevine en entorno real (E2E)
 - ☐ Soluciones multi-DRM para contenido premium
 
 ### Funciones de TV (OTT)
@@ -52,8 +53,7 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
   - `presentation/PlayerViewModel.kt`, `PlayerUiState.kt` (`PlaybackUiState`)
 - `com.mivan.streamingsandbox.di.*`
   - `RepositoryModule.kt`
-  - `PlayerEngineModule.kt` — **revisar:** si el engine solo sale del factory, evitar `@Binds` duplicado a `PlayerEngine`
-  - `PlayerFactoryModule.kt` (Binds de factory + vendor provider)
+  - `PlayerFactoryModule.kt` (Binds de factory + vendor provider) ✅
 - Raíz: `MainActivity.kt`, `StreamingSandboxApp.kt`
 - `ui/theme/*`
 
@@ -65,13 +65,13 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 
 ## Optimización profunda (QoE) — pasos guiados
 
-Retomar desde el primer paso no aplicado en código:
+Estado actual:
 
-1. `PlaybackMetrics.kt`
-2. `PlayerEngine` + `metrics: StateFlow<PlaybackMetrics>`
-3. `ExoPlayerEngine`: startup, rebuffers, errores fatales en listeners
-4. `PlayerUiState` + `collect` de métricas en `PlayerViewModel`
-5. Mostrar métricas en drawer y/o Logcat
+- ☑ `PlaybackMetrics.kt`
+- ☑ `PlayerEngine` + `metrics: StateFlow<PlaybackMetrics>`
+- ☑ `ExoPlayerEngine`: startup, rebuffers, errores fatales en listeners
+- ☑ `PlayerUiState` + `collect` de métricas en `PlayerViewModel`
+- ☑ Métricas en drawer y Logcat
 
 ## Vendors (Bitmovin / Castlabs)
 
@@ -81,6 +81,8 @@ Retomar desde el primer paso no aplicado en código:
 ## Pendiente (resumen frente a «Fuente de temas»)
 
 Detalle arriba en **Fuente de temas**. Resumen: DRM (Widevine + multi-DRM), EPG / Live / Timeshift / Catchup, Cast y sync con Chromecast / Smart TV.
+
+Nota DI: no existe `PlayerEngineModule`; el wiring actual está limpio en `PlayerFactoryModule` (sin bind directo de `PlayerEngine`).
 
 ## Gradle / IDE
 

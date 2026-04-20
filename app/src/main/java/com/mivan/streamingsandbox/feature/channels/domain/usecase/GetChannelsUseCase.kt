@@ -7,5 +7,5 @@ import javax.inject.Inject
 class GetChannelsUseCase @Inject constructor(
     private val repository: ChannelRepository
 ) {
-    operator fun invoke(): List<Channel> = repository.getChannels()
+    suspend operator fun invoke(): List<Channel> = repository.getChannels()
 }

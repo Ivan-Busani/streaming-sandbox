@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -241,6 +242,14 @@ class MainActivity : ComponentActivity() {
             PlaybackUiState.Ended -> "Ended"
             is PlaybackUiState.Error -> "Error de reproducción"
         }
+        val nowAndNext = uiState.nowAndNext
+        val nowEntry = uiState.nowAndNext?.now
+        val nowMs = uiState.epgNowEpochMs
+        val progressPercent = nowEntry?.let { entry ->
+            val total = (entry.endEpochMs - entry.startEpochMs).coerceAtLeast(1L)
+            val elapsed = (nowMs - entry.startEpochMs).coerceIn(0L, total)
+            ((elapsed * 100) / total).toInt()
+        }
 
         Column(
             modifier = Modifier
@@ -262,6 +271,37 @@ class MainActivity : ComponentActivity() {
                 text = "Estado: $playbackText",
                 color = Color.White
             )
+
+            HorizontalDivider()
+
+            Text(
+                text = "EPG",
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall
+            )
+
+            Text(
+                text = "Ahora: ${nowAndNext?.now?.title ?: "N/A"}"
+            )
+
+            nowAndNext?.now?.description?.let { desc ->
+                Text(
+                    text = desc,
+                    color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Text(
+                text = "Progreso: ${progressPercent?.let { "$it%" } ?: "N/A"}",
+                color = Color.White
+            )
+
+            Text(
+                text = "Siguiente: ${nowAndNext?.next?.title ?: "N/A"}"
+            )
+
+            HorizontalDivider()
 
             MetricsSection(metrics = uiState.metrics)
 

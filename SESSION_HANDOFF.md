@@ -1,6 +1,6 @@
 # StreamingSandbox — handoff para retomar
 
-**Fecha de referencia:** 2026-04-15
+**Fecha de referencia:** 2026-04-20
 
 ## Objetivo general
 
@@ -23,7 +23,7 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 ### Seguridad (DRM)
 
 - ☑ Base de integración Widevine (dominio + engine + ViewModel)
-- ☐ Flujo completo de licencia Widevine en entorno real (E2E)
+- ☑ Flujo completo de licencia Widevine en entorno real (E2E)
 - ☐ Soluciones multi-DRM para contenido premium
 
 ### Funciones de TV (OTT)
@@ -72,6 +72,15 @@ Estado actual:
 - ☑ `ExoPlayerEngine`: startup, rebuffers, errores fatales en listeners
 - ☑ `PlayerUiState` + `collect` de métricas en `PlayerViewModel`
 - ☑ Métricas en drawer y Logcat
+
+## Estado actual (resumen)
+
+- ☑ QoE completo en app: métricas de arranque/rebuffer/error en `PlayerViewModel`, drawer y Logcat.
+- ☑ DRM Widevine E2E validado: con URL de licencia real reproduce; con placeholder falla como prueba negativa esperada.
+- ☑ Errores de reproducción/DRM mejorados: mensaje amigable en UI + detalle técnico en Logcat.
+- ☑ DI del player verificado: wiring vía `PlayerFactoryModule` sin bind directo de `PlayerEngine`.
+- ☑ Configuración de licencia externalizada en `BuildConfig` (`WIDEVINE_LICENSE_URL`) por build type.
+- ☐ EPG/Live, Timeshift/Catchup, Cast y multi-DRM siguen pendientes.
 
 ## Vendors (Bitmovin / Castlabs)
 

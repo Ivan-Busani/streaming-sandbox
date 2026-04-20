@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.ViewModel
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetChannelsUseCase
+import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetNowAndNextForChannelUseCase
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineFactory
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
 import com.mivan.streamingsandbox.feature.player.domain.PlayerVendorProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,7 @@ import javax.inject.Inject
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     getChannelsUseCase: GetChannelsUseCase,
+    private val getNowAndNextForChannelUseCase: GetNowAndNextForChannelUseCase,
     playerEngineFactory: PlayerEngineFactory,
     playerVendorProvider: PlayerVendorProvider
 ) : ViewModel() {
@@ -35,12 +38,14 @@ class PlayerViewModel @Inject constructor(
     private var lastLoggedMetrics: PlaybackMetrics? = null
 
     init {
-        val channels = getChannelsUseCase()
+        viewModelScope.launch {
+            val channels = getChannelsUseCase()
+            _uiState.value = PlayerUiState(
+                channels = channels,
+                playbackState = PlaybackUiState.Idle
+            )
+        }
 
-        _uiState.value = PlayerUiState(
-            channels = channels,
-            playbackState = PlaybackUiState.Idle
-        )
 
         viewModelScope.launch {
             playerEngine.state.collect { engineState ->
@@ -58,13 +63,46 @@ class PlayerViewModel @Inject constructor(
                 logMetricsIfChanged(metrics)
             }
         }
+
+        viewModelScope.launch {
+            while (true) {
+                _uiState.update { current ->
+                    current.copy(
+                        epgNowEpochMs = System.currentTimeMillis()
+                    )
+                }
+                delay(1_000L)
+            }
+        }
+
+        viewModelScope.launch {
+            while (true) {
+                val selected = _uiState.value.selectedChannel
+                if (selected != null) {
+                    val nowAndNext = getNowAndNextForChannelUseCase(selected.id)
+                    _uiState.update { current ->
+                        current.copy(
+                            nowAndNext = nowAndNext
+                        )
+                    }
+                }
+                delay(30_000L)
+            }
+        }
     }
 
     fun selectChannel(channel: Channel) {
+        val nowAndNext = getNowAndNextForChannelUseCase(channel.id)
+
         val current = _uiState.value.selectedChannel
         if (current?.id == channel.id) return
 
-        _uiState.update { it.copy(selectedChannel = channel) }
+        _uiState.update {
+            it.copy(
+                selectedChannel = channel,
+                nowAndNext = nowAndNext
+            )
+        }
 
         loadChannel(
             channel = channel,

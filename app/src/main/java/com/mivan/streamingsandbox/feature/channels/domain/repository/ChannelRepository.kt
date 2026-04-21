@@ -5,5 +5,5 @@ import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
 
 interface ChannelRepository {
     suspend fun getChannels(): List<Channel>
-    fun getEpgEntries(): List<EpgEntry>
+    suspend fun getEpgEntries(): List<EpgEntry>
 }

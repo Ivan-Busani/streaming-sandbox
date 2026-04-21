@@ -1,7 +1,6 @@
 package com.mivan.streamingsandbox
 
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -55,6 +54,9 @@ import com.mivan.streamingsandbox.feature.player.presentation.PlayerViewModel
 import com.mivan.streamingsandbox.ui.theme.StreamingSandboxTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -234,21 +236,13 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun SidebarDrawerContent(uiState: PlayerUiState, onRetry: () -> Unit, onSelectChannel: (Channel) -> Unit) {
-        val playbackText = when (val state = uiState.playbackState) {
+        val playbackText = when (uiState.playbackState) {
             PlaybackUiState.Idle -> "Idle"
             PlaybackUiState.Buffering -> "Buffering..."
             PlaybackUiState.Ready -> "Ready"
             PlaybackUiState.Playing -> "Playing"
             PlaybackUiState.Ended -> "Ended"
             is PlaybackUiState.Error -> "Error de reproducción"
-        }
-        val nowAndNext = uiState.nowAndNext
-        val nowEntry = uiState.nowAndNext?.now
-        val nowMs = uiState.epgNowEpochMs
-        val progressPercent = nowEntry?.let { entry ->
-            val total = (entry.endEpochMs - entry.startEpochMs).coerceAtLeast(1L)
-            val elapsed = (nowMs - entry.startEpochMs).coerceIn(0L, total)
-            ((elapsed * 100) / total).toInt()
         }
 
         Column(
@@ -275,37 +269,41 @@ class MainActivity : ComponentActivity() {
             HorizontalDivider()
 
             Text(
-                text = "EPG",
+                text = "Timeline",
                 color = Color.White,
                 style = MaterialTheme.typography.titleSmall
             )
 
-            Text(
-                text = "Ahora: ${nowAndNext?.now?.title ?: "N/A"}"
-            )
-
-            nowAndNext?.now?.description?.let { desc ->
+            if (uiState.programs.isEmpty()) {
                 Text(
-                    text = desc,
-                    color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.bodySmall
+                    text = "Sin programación disponible",
+                    color = Color.White.copy(alpha = 0.8f)
                 )
+            } else {
+                uiState.programs.forEachIndexed { index, program ->
+                    Text(
+                        text = program.title,
+                        color = Color.White
+                    )
+
+                    if (index == 0) {
+                        Text(
+                            text = "Progreso: ${uiState.currentProgramProgressPercent?.let { "$it%" } ?: "N/A"}",
+                            color = Color.White
+                        )
+                    }
+
+                    Text(
+                        text = formatHourRange(program.startEpochMs, program.endEpochMs),
+                        color = Color.White.copy(alpha = 0.75f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
-
-            Text(
-                text = "Progreso: ${progressPercent?.let { "$it%" } ?: "N/A"}",
-                color = Color.White
-            )
-
-            Text(
-                text = "Siguiente: ${nowAndNext?.next?.title ?: "N/A"}"
-            )
 
             HorizontalDivider()
 
             MetricsSection(metrics = uiState.metrics)
-
-            Log.d("MainActivity", "Playback state: ${uiState.playbackState}")
 
             if (uiState.playbackState is PlaybackUiState.Error) {
                 val errorMessage = (uiState.playbackState).message
@@ -372,4 +370,11 @@ class MainActivity : ComponentActivity() {
             color = Color.White
         )
     }
+}
+
+private fun formatHourRange(startEpochMs: Long, endEpochMs: Long): String {
+    val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val start = formatter.format(Date(startEpochMs))
+    val end = formatter.format(Date(endEpochMs))
+    return "$start - $end"
 }

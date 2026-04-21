@@ -1,6 +1,6 @@
 # StreamingSandbox — handoff para retomar
 
-**Fecha de referencia:** 2026-04-20
+**Fecha de referencia:** 2026-04-21
 
 ## Objetivo general
 
@@ -28,7 +28,9 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 
 ### Funciones de TV (OTT)
 
-- ☐ Manejo de EPG (guía de canales) y Live TV
+- ☑ EPG + Live TV base (timeline en drawer, horarios, progreso, carga de canales por M3U con fallback)
+- ☑ EPG remoto España (`iptv-epg.org` gzip → `XmlTvParser`; match `tvg-id` M3U + fallback nombre; lista mapeada cacheada con TTL + invalidación por epoch de canales; simulado solo si mapping vacío o fallo fetch)
+- ☐ Afinar cobertura EPG vs lista M3U (IDs distintos entre fuentes → % match bajo; curated M3U o mejor matching p. ej. `<channel>` XMLTV)
 - ☐ Timeshift (pausa en vivo) y Catchup (grabaciones)
 
 ### Ecosistema de Casteo
@@ -41,8 +43,9 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 - `com.mivan.streamingsandbox.feature.channels.*`
   - `domain/model/Channel.kt` (+ `StreamType`)
   - `domain/repository/ChannelRepository.kt`
-  - `domain/usecase/GetChannelsUseCase.kt`
-  - `data/repository/ChannelRepositoryImpl.kt`
+  - `domain/usecase/GetChannelsUseCase.kt`, `GetProgramsForChannelUseCase.kt`
+  - `data/repository/ChannelRepositoryImpl.kt` (M3U + mapa `tvg-id`, EPG mapeado cacheado)
+  - `data/m3u/M3uParser.kt`, `data/epg/EpgRemoteDataSource.kt`, `data/epg/XmlTvParser.kt`
 - `com.mivan.streamingsandbox.feature.player.*`
   - `domain/PlayerEngine.kt` (interfaz + `PlayerEngineState` sealed)
   - `domain/PlaybackMetrics.kt` (si se completó el bloque QoE)
@@ -80,7 +83,10 @@ Estado actual:
 - ☑ Errores de reproducción/DRM mejorados: mensaje amigable en UI + detalle técnico en Logcat.
 - ☑ DI del player verificado: wiring vía `PlayerFactoryModule` sin bind directo de `PlayerEngine`.
 - ☑ Configuración de licencia externalizada en `BuildConfig` (`WIDEVINE_LICENSE_URL`) por build type.
-- ☐ EPG/Live, Timeshift/Catchup, Cast y multi-DRM siguen pendientes.
+- ☑ Live TV base completado: catálogo remoto `iptv-org` + cache TTL + fallback local.
+- ☑ Timeline básico en UI (programa actual/siguientes + rango horario + progreso).
+- ☑ EPG remoto integrado + caché del resultado mapeado (evita remapear todo el XML en cada consulta por canal).
+- ☐ Afinar match EPG↔canales, Timeshift/Catchup, Cast y multi-DRM siguen pendientes.
 
 ## Vendors (Bitmovin / Castlabs)
 
@@ -89,7 +95,7 @@ Estado actual:
 
 ## Pendiente (resumen frente a «Fuente de temas»)
 
-Detalle arriba en **Fuente de temas**. Resumen: DRM (Widevine + multi-DRM), EPG / Live / Timeshift / Catchup, Cast y sync con Chromecast / Smart TV.
+Detalle arriba en **Fuente de temas**. Resumen: tuning cobertura EPG↔M3U, DRM multi-DRM, Timeshift/Catchup, Cast y sync con Chromecast / Smart TV.
 
 Nota DI: no existe `PlayerEngineModule`; el wiring actual está limpio en `PlayerFactoryModule` (sin bind directo de `PlayerEngine`).
 

@@ -5,8 +5,9 @@ import android.view.View
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.ViewModel
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
+import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
 import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetChannelsUseCase
-import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetNowAndNextForChannelUseCase
+import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetProgramsForChannelUseCase
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineFactory
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
@@ -23,7 +24,7 @@ import javax.inject.Inject
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     getChannelsUseCase: GetChannelsUseCase,
-    private val getNowAndNextForChannelUseCase: GetNowAndNextForChannelUseCase,
+    private val getProgramsForChannelUseCase: GetProgramsForChannelUseCase,
     playerEngineFactory: PlayerEngineFactory,
     playerVendorProvider: PlayerVendorProvider
 ) : ViewModel() {
@@ -46,7 +47,6 @@ class PlayerViewModel @Inject constructor(
             )
         }
 
-
         viewModelScope.launch {
             playerEngine.state.collect { engineState ->
                 _uiState.update { current ->
@@ -66,9 +66,14 @@ class PlayerViewModel @Inject constructor(
 
         viewModelScope.launch {
             while (true) {
+                val now = System.currentTimeMillis()
                 _uiState.update { current ->
                     current.copy(
-                        epgNowEpochMs = System.currentTimeMillis()
+                        epgNowEpochMs = now,
+                        currentProgramProgressPercent = calculateCurrentProgress(
+                            programs = current.programs,
+                            nowEpochMs = now
+                        )
                     )
                 }
                 delay(1_000L)
@@ -79,10 +84,15 @@ class PlayerViewModel @Inject constructor(
             while (true) {
                 val selected = _uiState.value.selectedChannel
                 if (selected != null) {
-                    val nowAndNext = getNowAndNextForChannelUseCase(selected.id)
+                    val now = System.currentTimeMillis()
+                    val programs = getProgramsForChannelUseCase(selected.id)
                     _uiState.update { current ->
                         current.copy(
-                            nowAndNext = nowAndNext
+                            programs = programs,
+                            currentProgramProgressPercent = calculateCurrentProgress(
+                                programs = programs,
+                                nowEpochMs = now
+                            )
                         )
                     }
                 }
@@ -92,22 +102,29 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun selectChannel(channel: Channel) {
-        val nowAndNext = getNowAndNextForChannelUseCase(channel.id)
-
         val current = _uiState.value.selectedChannel
         if (current?.id == channel.id) return
 
-        _uiState.update {
-            it.copy(
-                selectedChannel = channel,
-                nowAndNext = nowAndNext
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val programs = getProgramsForChannelUseCase(channel.id)
+
+            _uiState.update {
+                it.copy(
+                    selectedChannel = channel,
+                    programs = programs,
+                    currentProgramProgressPercent = calculateCurrentProgress(
+                        programs = programs,
+                        nowEpochMs = now
+                    )
+                )
+            }
+
+            loadChannel(
+                channel = channel,
+                seekToMs = 0L
             )
         }
-
-        loadChannel(
-            channel = channel,
-            seekToMs = 0L
-        )
     }
 
     fun retryCurrentChannel() {
@@ -140,6 +157,13 @@ class PlayerViewModel @Inject constructor(
             seekToMs = seekToMs,
             drm = channel.drm
         )
+    }
+
+    private fun calculateCurrentProgress(programs: List<EpgEntry>, nowEpochMs: Long): Int? {
+        val current = programs.firstOrNull() ?: return null
+        val total = (current.endEpochMs - current.startEpochMs).coerceAtLeast(1L)
+        val elapsed = (nowEpochMs - current.startEpochMs).coerceIn(0L, total)
+        return ((elapsed * 100) / total).toInt()
     }
 
     private fun logMetricsIfChanged(metrics: PlaybackMetrics) {

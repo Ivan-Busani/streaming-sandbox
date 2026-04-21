@@ -2,7 +2,8 @@ package com.mivan.streamingsandbox.feature.channels.data.m3u
 
 data class M3uChannel(
     val name: String,
-    val url: String
+    val url: String,
+    val tvgId: String? = null
 )
 
 object M3uParser {
@@ -15,11 +16,20 @@ object M3uParser {
 
         val channels = mutableListOf<M3uChannel>()
         var pendingName: String? = null
+        var pendingTvgId: String? = null
 
         for (line in lines) {
             if (line.startsWith("#EXTINF", ignoreCase = true)) {
                 // EXTINF format: #EXTINF:-1 ... ,Channel Name
                 pendingName = line.substringAfterLast(",").trim().ifBlank { "Unnamed channel" }
+
+                val tvgIdMatch = Regex("""tvg-id="([^"]+)"""", RegexOption.IGNORE_CASE)
+                    .find(line)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.trim()
+
+                pendingTvgId = tvgIdMatch?.ifBlank { null }
                 continue
             }
 
@@ -33,10 +43,15 @@ object M3uParser {
             val name = pendingName ?: "Unnamed channel"
 
             if (url.startsWith("http://") || url.startsWith("https://")) {
-                channels.add(M3uChannel(name, url))
+                channels.add(M3uChannel(
+                    name,
+                    url,
+                    tvgId = pendingTvgId
+                ))
             }
 
             pendingName = null
+            pendingTvgId = null
         }
 
         return channels

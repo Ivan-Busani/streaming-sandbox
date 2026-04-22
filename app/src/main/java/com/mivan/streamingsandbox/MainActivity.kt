@@ -1,6 +1,7 @@
 package com.mivan.streamingsandbox
 
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,6 +28,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -60,6 +62,7 @@ import java.util.Locale
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private val TAG = "*|MainActivity"
     private val vm: PlayerViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,6 +130,7 @@ class MainActivity : ComponentActivity() {
                     VideoPlayerLayer(
                         onAttachPlayerView = onAttachPlayerView,
                         onControllerVisibilityChanged = { visible ->
+                            Log.d(TAG, "onControllerVisibilityChanged: $visible")
                             isPlayerControlsVisible = visible
                         }
                     )
@@ -146,6 +150,15 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     )
+
+                    ProgramProgressOverlay(
+                        visible = isPlayerControlsVisible,
+                        progressPercent = uiState.currentProgramProgressPercent,
+                        elapsedMs = uiState.currentProgramElapsedMs,
+                        totalMs = uiState.currentProgramTotalMs,
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
+
                     NoChannelSelectedOverlay(
                         modifier = Modifier.align(Alignment.Center),
                         visible = !isPlayerControlsVisible && uiState.selectedChannel == null
@@ -167,11 +180,12 @@ class MainActivity : ComponentActivity() {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
-                PlayerView(context).apply {
-                    useController = true
-                    setControllerVisibilityListener(controllerVisibilityListener)
-                    onAttachPlayerView(this)
-                }
+                val playerView = android.view.LayoutInflater.from(context)
+                    .inflate(R.layout.player_view_live, null, false) as PlayerView
+                playerView.useController = false
+                playerView.setControllerVisibilityListener(controllerVisibilityListener)
+                onAttachPlayerView(playerView)
+                playerView
             },
             update = { view ->
                 onAttachPlayerView(view)
@@ -207,6 +221,43 @@ class MainActivity : ComponentActivity() {
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun ProgramProgressOverlay(
+        visible: Boolean,
+        progressPercent: Int?,
+        elapsedMs: Long?,
+        totalMs: Long?,
+        modifier: Modifier = Modifier
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            modifier = modifier,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            val progress = ((progressPercent ?: 0).coerceIn(0, 100)) / 100f
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    text = "${formatDuration(elapsedMs)} / ${formatDuration(totalMs)}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -377,4 +428,12 @@ private fun formatHourRange(startEpochMs: Long, endEpochMs: Long): String {
     val start = formatter.format(Date(startEpochMs))
     val end = formatter.format(Date(endEpochMs))
     return "$start - $end"
+}
+
+private fun formatDuration(ms: Long?): String {
+    if (ms == null || ms < 0) return "--:--"
+    val totalSec = ms / 1000
+    val min = totalSec / 60
+    val sec = totalSec % 60
+    return "%02d:%02d".format(min, sec)
 }

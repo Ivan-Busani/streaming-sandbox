@@ -10,7 +10,7 @@ class GetProgramsForChannelUseCase @Inject constructor(
     suspend operator fun invoke(
         channelId: String,
         nowEpochMs: Long = System.currentTimeMillis(),
-        limit: Int = 3
+        limit: Int = 5
     ): List<EpgEntry> {
         return channelRepository
             .getEpgEntries()

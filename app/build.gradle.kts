@@ -24,23 +24,49 @@ android {
     }
 
     buildTypes {
-        debug {
+        defaultConfig {
             buildConfigField(
                 "String",
                 "WIDEVINE_LICENSE_URL",
                 "\"https://proxy.uat.widevine.com/proxy?video_id=2015_tears&provider=widevine_test\""
             )
+            buildConfigField(
+                "String",
+                "IPTV_SOURCE_M3U_URL",
+                "\"https://iptv-org.github.io/iptv/countries/mx.m3u\""
+            )
+            buildConfigField(
+                "String",
+                "EPG_XML_GZ_URL",
+                "\"https://iptv-epg.org/files/epg-mx.xml.gz\""
+            )
+            buildConfigField(
+                "String",
+                "EPG_CHANNEL_ALIASES",
+                "\"" +
+                        "adn 40=adn40;canal 22 nacional=canal 22" +
+                        "azteca internacional=azteca internacional hd;" +
+                        "foro tv=forotv;"+
+                        "milenio television=milenio;" +
+                        "multimedios bajio=multimedios;" +
+                        "multimedios cdmx=multimedios;" +
+                        "multimedios ciudad juarez=multimedios;" +
+                        "multimedios guadalajara=multimedios;" +
+                        "multimedios laguna=multimedios;" +
+                        "multimedios monterrey=multimedios;" +
+                        "multimedios puebla=multimedios;" +
+                        "multimedios saltillo=multimedios" +
+                        "\""
+            )
+        }
+        debug {
+
         }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
-            )
-            buildConfigField(
-                "String",
-                "WIDEVINE_LICENSE_URL",
-                "\"https://proxy.uat.widevine.com/proxy?video_id=2015_tears&provider=widevine_test\""
             )
         }
     }

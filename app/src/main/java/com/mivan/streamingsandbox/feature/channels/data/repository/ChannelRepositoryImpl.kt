@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.text.Normalizer
 
 class ChannelRepositoryImpl @Inject constructor(
     private val epgRemoteDataSource: EpgRemoteDataSource
@@ -31,15 +32,162 @@ class ChannelRepositoryImpl @Inject constructor(
     private var cachedMappedEpgAtEpochMs: Long = 0L
     private var cachedMappedEpgForChannelsEpochMs: Long = Long.MIN_VALUE
 
+    @Volatile
+    private var cachedSourceEpgUrl: String? = null
+
     private val epgBaseEpochMs = System.currentTimeMillis()
     private val httpClient = OkHttpClient()
 
     private companion object {
-        private const val TAG = "ChannelRepository"
-        private const val IPTV_SPA_M3U_URL = "https://iptv-org.github.io/iptv/languages/spa.m3u"
+        private const val TAG = "*|ChannelRepository"
         private const val REMOTE_LIMIT = 200
         private const val CACHE_TTL_MS = 6 * 60 * 60 * 1000L
         private const val MAPPED_EPG_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
+    }
+
+    override suspend fun getChannels(): List<Channel> {
+        val now = System.currentTimeMillis()
+        val cached = cachedChannels
+        if (cached != null && (now - cachedChannelsAtEpochMs) < CACHE_TTL_MS) {
+            return cached
+        }
+
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val request = Request.Builder()
+                    .url(BuildConfig.IPTV_SOURCE_M3U_URL)
+                    .build()
+
+                var remoteChannels: List<Channel> = emptyList()
+                val builtChannels = mutableListOf<Channel>()
+                val tvgIdToChannelId = mutableMapOf<String, String>()
+
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        error("M3U request failed: ${response.code}")
+                    }
+
+                    val body = response.body?.string().orEmpty()
+                    if (body.isBlank()) {
+                        error("M3U body is empty")
+                    }
+                    val playlist = M3uParser.parse(body)
+                    val parsedChannels = playlist.channels
+
+                    for (m3u in parsedChannels) {
+                        val streamType = inferStreamType(m3u.url) ?: continue
+                        val id = "live-m3u-${m3u.name}-${m3u.url.hashCode()}"
+                        val channel = Channel(
+                            id = id,
+                            name = m3u.name,
+                            type = streamType,
+                            url = m3u.url
+                        )
+                        builtChannels.add(channel)
+
+                        m3u.tvgId
+                            ?.trim()
+                            ?.lowercase()
+                            ?.takeIf { it.isNotEmpty() }
+                            ?.let { tvgIdToChannelId[it] = id }
+                    }
+
+                    // remoteChannels = builtChannels.take(REMOTE_LIMIT)
+                    remoteChannels = builtChannels
+
+                    cachedTvgIdToChannelId = tvgIdToChannelId
+                    cachedSourceEpgUrl = playlist.epgUrl
+                }
+
+                if (remoteChannels.isEmpty()) error("No playable channels parsed from M3U")
+
+                cachedChannels = remoteChannels
+                cachedChannelsAtEpochMs = now
+
+                // Invalidate mapped EPG cache when channel set changes
+                cachedMappedEpgEntries = null
+                cachedMappedEpgAtEpochMs = 0L
+                cachedMappedEpgForChannelsEpochMs = Long.MIN_VALUE
+
+                remoteChannels
+
+            }
+        }.getOrElse {
+            cachedTvgIdToChannelId = emptyMap()
+            val fallback = fallbackChannels()
+            cachedChannels = fallback
+            cachedChannelsAtEpochMs = now
+
+            // Invalidate mapped EPG cache when channel set changes
+            cachedMappedEpgEntries = null
+            cachedMappedEpgAtEpochMs = 0L
+            cachedMappedEpgForChannelsEpochMs = Long.MIN_VALUE
+            cachedSourceEpgUrl = null
+
+            return fallback
+        }
+    }
+
+    override suspend fun getEpgEntries(): List<EpgEntry> {
+        val channels = cachedChannels ?: fallbackChannels()
+        val now = System.currentTimeMillis()
+
+        val cachedEntries = cachedMappedEpgEntries
+        val ageMs = now - cachedMappedEpgAtEpochMs
+        val ttlOk = ageMs < MAPPED_EPG_CACHE_TTL_MS
+        val channelsEpochOk = cachedMappedEpgForChannelsEpochMs == cachedChannelsAtEpochMs
+        if (cachedEntries != null && ttlOk && channelsEpochOk) {
+            Log.d(
+                TAG,
+                "EPG mapped cache HIT: entries=${cachedEntries.size}, ageMs=$ageMs, epgEpoch=$cachedMappedEpgForChannelsEpochMs, channelsEpoch=$cachedChannelsAtEpochMs"
+            )
+            return cachedEntries
+        }
+
+        return withContext(Dispatchers.Default) {
+            runCatching {
+                val remotePrograms = epgRemoteDataSource.fetchPrograms(cachedSourceEpgUrl)
+                val mapped = mapRemoteEpgToKnownChannels(remotePrograms, channels)
+
+                val matchedChannelIds = mapped.map { it.channelId }.toSet()
+
+                val channelsWithEpg = channels.count { it.id in matchedChannelIds }
+                val channelCoveragePercent = if (channels.isEmpty()) 0 else (channelsWithEpg * 100) / channels.size
+
+                Log.d(
+                    TAG,
+                    "EPG channel coverage: $channelsWithEpg/${channels.size} ($channelCoveragePercent%)"
+                )
+
+                val result = mapped.ifEmpty {
+                    Log.d(TAG, "Mapped EPG is empty, using simulated fallback")
+                    buildFallbackEpgForChannels(channels)
+                }
+
+                cachedMappedEpgEntries = result
+                cachedMappedEpgAtEpochMs = now
+                cachedMappedEpgForChannelsEpochMs = cachedChannelsAtEpochMs
+
+                Log.d(
+                    TAG,
+                    "EPG mapped cache STORE: entries=${result.size}, channelsEpoch=$cachedChannelsAtEpochMs"
+                )
+
+                result
+            }.getOrElse { throwable ->
+                Log.e(TAG, "EPG fetch/map failed, using simulated fallback", throwable)
+                val fallback = buildFallbackEpgForChannels(channels)
+                // Cache fallback too, so next calls can HIT instead of remapping every time
+                cachedMappedEpgEntries = fallback
+                cachedMappedEpgAtEpochMs = now
+                cachedMappedEpgForChannelsEpochMs = cachedChannelsAtEpochMs
+                Log.d(
+                    TAG,
+                    "EPG mapped cache STORE (fallback): entries=${fallback.size}, channelsEpoch=$cachedChannelsAtEpochMs"
+                )
+                fallback
+            }
+        }
     }
 
     private fun fallbackChannels(): List<Channel> = listOf(
@@ -78,7 +226,7 @@ class ChannelRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun buildEpgForChannels(channels: List<Channel>): List<EpgEntry> {
+    private fun buildFallbackEpgForChannels(channels: List<Channel>): List<EpgEntry> {
         val minuteMs = 60 * 1000L
         return channels.flatMap { channel ->
             val jitterMin = kotlin.math.abs(channel.id.hashCode()) % 10
@@ -94,7 +242,7 @@ class ChannelRepositoryImpl @Inject constructor(
             listOf(
                 EpgEntry(
                     channelId = channel.id,
-                    title = "En directo · ${channel.name}",
+                    title = "Ahora · ${channel.name}",
                     startEpochMs = currentStart,
                     endEpochMs = currentEnd,
                     description = "Guía simulada para sandbox"
@@ -119,135 +267,80 @@ class ChannelRepositoryImpl @Inject constructor(
         remotePrograms: List<EpgEntry>,
         channels: List<Channel>
     ): List<EpgEntry> {
-        val byNormalizeName = channels.associateBy { normalizeChannelName(it.name) }
+        val byNormalizeName = channels.associateBy { applyAlias(normalizeChannelName(it.name)) }
 
-        return remotePrograms.mapNotNull { entry ->
+        val mapped = remotePrograms.mapNotNull { entry ->
             val xmlChannelKey = entry.channelId.trim().lowercase()
             val byTvg = cachedTvgIdToChannelId[xmlChannelKey]
             if (byTvg != null) {
                 return@mapNotNull entry.copy(channelId = byTvg)
             }
 
-            val normalizedName = normalizeChannelName(entry.channelId)
-            val byName = byNormalizeName[normalizedName] ?: return@mapNotNull null
+            val candidateNames = buildList {
+                add(entry.channelId)
+                entry.sourceDisplayName?.let { add(it) }
+            }
+
+            val normalizedCandidates = candidateNames
+                .asSequence()
+                .map { applyAlias(normalizeChannelName(it)) }
+                .filter { it.isNotBlank() }
+                .toList()
+
+            val byName = normalizedCandidates
+                .firstNotNullOfOrNull { byNormalizeName[it] }
+                ?: return@mapNotNull null
+
+            /*
+            val exactMatch = normalizedCandidates
+                .firstNotNullOfOrNull { byNormalizeName[it] }
+
+            val byName = exactMatch ?: run {
+                channels.firstOrNull { channel ->
+                    val channelNorm = normalizeChannelName(channel.name)
+                    if (channelNorm.length < 4) return@firstOrNull false
+
+                    normalizedCandidates.any { candidate ->
+                        candidate.length >= 4 &&
+                                (channelNorm.contains(candidate)
+                                        || candidate.contains(channelNorm))
+                    }
+                }
+            } ?: return@mapNotNull null
+             */
+
             entry.copy(channelId = byName.id)
         }
+
+        return mapped
     }
 
     private fun normalizeChannelName(raw: String): String {
-        return raw.lowercase()
-            .replace(Regex("[^a-z0-9]"), "")
+        val noAccents = Normalizer.normalize(raw, Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+        return noAccents
+            .lowercase()
+            .replace(Regex("\\[[^]]*]"), " ")      // [Not 24/7], [Geo-blocked]
+            .replace(Regex("\\([^)]*\\)"), " ")      // (720p), (1080p)
+            .replace(Regex("\\b(hd|fhd|uhd|sd|tv|canal|mx)\\b"), " ")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+            .replace(Regex("\\s+"), " ")
     }
 
-    override suspend fun getChannels(): List<Channel> {
-        val now = System.currentTimeMillis()
-        val cached = cachedChannels
-        if (cached != null && (now - cachedChannelsAtEpochMs) < CACHE_TTL_MS) {
-            return cached
-        }
-
-        return runCatching {
-            withContext(Dispatchers.IO) {
-                val request = Request.Builder()
-                    .url(IPTV_SPA_M3U_URL)
-                    .build()
-
-                var remoteChannels: List<Channel> = emptyList()
-                val builtChannels = mutableListOf<Channel>()
-                val tvgIdToChannelId = mutableMapOf<String, String>()
-
-                httpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        error("M3U request failed: ${response.code}")
-                    }
-
-                    val body = response.body?.string().orEmpty()
-                    if (body.isBlank()) {
-                        error("M3U body is empty")
-                    }
-
-                    val parsed = M3uParser.parse(body)
-                    for (m3u in parsed) {
-                        val streamType = inferStreamType(m3u.url) ?: continue
-                        val id = "live-m3u-${m3u.name}-${m3u.url.hashCode()}"
-                        val channel = Channel(
-                            id = id,
-                            name = m3u.name,
-                            type = streamType,
-                            url = m3u.url
-                        )
-                        builtChannels.add(channel)
-
-                        m3u.tvgId
-                            ?.trim()
-                            ?.lowercase()
-                            ?.takeIf { it.isNotEmpty() }
-                            ?.let { tvgIdToChannelId[it] = id }
-                    }
-
-                    remoteChannels = builtChannels.take(REMOTE_LIMIT)
-                    cachedTvgIdToChannelId = tvgIdToChannelId
-                }
-
-                if (remoteChannels.isEmpty()) error("No playable channels parsed from M3U")
-
-                cachedChannels = remoteChannels
-                cachedChannelsAtEpochMs = now
-                remoteChannels
-
+    private val configuredAliases: Map<String, String> by lazy {
+        BuildConfig.EPG_CHANNEL_ALIASES
+            .split(";")
+            .mapNotNull { pair ->
+                val parts = pair.split("=")
+                if (parts.size != 2) return@mapNotNull null
+                val from = normalizeChannelName(parts[0])
+                val to = normalizeChannelName(parts[1])
+                if (from.isBlank() || to.isBlank()) null else from to to
             }
-        }.getOrElse {
-            cachedTvgIdToChannelId = emptyMap()
-            val fallback = fallbackChannels()
-            cachedChannels = fallback
-            cachedChannelsAtEpochMs = now
-            return fallback
-        }
+            .toMap()
     }
 
-    override suspend fun getEpgEntries(): List<EpgEntry> {
-        val channels = cachedChannels ?: fallbackChannels()
-        val now = System.currentTimeMillis()
-
-        val cachedEntries = cachedMappedEpgEntries
-        if (cachedEntries != null &&
-            (now - cachedMappedEpgAtEpochMs) < MAPPED_EPG_CACHE_TTL_MS &&
-            cachedMappedEpgForChannelsEpochMs == cachedChannelsAtEpochMs
-            ) {
-            return cachedEntries
-        }
-
-        return runCatching {
-            val remotePrograms = epgRemoteDataSource.fetchPrograms()
-            val mapped = mapRemoteEpgToKnownChannels(remotePrograms, channels)
-
-            val total = remotePrograms.size
-            val matched = mapped.size
-            val percent = if (total == 0) 0 else (matched * 100) / total
-            Log.d(TAG, "Epg match: $matched/$total ($percent%)")
-
-            val matchedChannelIds = mapped.map { it.channelId }.toSet()
-            channels
-                .filter { it.id !in matchedChannelIds }
-                .forEach { channel ->
-                    Log.d(TAG, "No EPG match for channelId=${channel.id}, name=${channel.name}")
-                }
-
-            val result = mapped.ifEmpty {
-                Log.d(TAG, "Mapped EPG is empty, using simulated fallback")
-                buildEpgForChannels(channels)
-            }
-
-            cachedMappedEpgEntries = result
-            cachedMappedEpgAtEpochMs = now
-            cachedMappedEpgForChannelsEpochMs = cachedChannelsAtEpochMs
-
-            result
-        }.getOrElse {
-            cachedMappedEpgEntries = null
-            cachedMappedEpgAtEpochMs = 0L
-            cachedMappedEpgForChannelsEpochMs = Long.MIN_VALUE
-            buildEpgForChannels(channels)
-        }
-    }
+    private fun applyAlias(normalized: String): String =
+        configuredAliases[normalized] ?: normalized
 }

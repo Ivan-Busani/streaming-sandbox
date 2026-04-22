@@ -1,13 +1,23 @@
 package com.mivan.streamingsandbox.feature.channels.data.m3u
 
+import android.util.Log
+
 data class M3uChannel(
     val name: String,
     val url: String,
     val tvgId: String? = null
 )
 
+data class M3uPlaylist(
+    val channels: List<M3uChannel>,
+    val epgUrl: String? = null
+)
+
 object M3uParser {
-    fun parse(input: String): List<M3uChannel> {
+
+    private const val TAG = "*|M3uParser"
+
+    fun parse(input: String): M3uPlaylist {
         val lines = input
             .lineSequence()
             .map { it.trim() }
@@ -18,7 +28,18 @@ object M3uParser {
         var pendingName: String? = null
         var pendingTvgId: String? = null
 
-        for (line in lines) {
+        // Parse optional XMLTV endpoint for EXTM3U header.
+        val firstLine = lines.firstOrNull().orEmpty()
+        val epgUrl = Regex("""x-tvg-url="([^"]+)"""", RegexOption.IGNORE_CASE)
+            .find(firstLine)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.ifBlank { null }
+
+        for (i in 0 until lines.size) {
+            val line = lines[i]
+            Log.d(TAG, "Line ${i + 1}: $line")
             if (line.startsWith("#EXTINF", ignoreCase = true)) {
                 // EXTINF format: #EXTINF:-1 ... ,Channel Name
                 pendingName = line.substringAfterLast(",").trim().ifBlank { "Unnamed channel" }
@@ -54,6 +75,9 @@ object M3uParser {
             pendingTvgId = null
         }
 
-        return channels
+        return M3uPlaylist(
+            channels = channels,
+            epgUrl = epgUrl
+        )
     }
 }

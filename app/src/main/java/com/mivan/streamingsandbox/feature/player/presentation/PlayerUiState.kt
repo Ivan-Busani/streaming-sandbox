@@ -11,7 +11,9 @@ data class PlayerUiState(
     val metrics: PlaybackMetrics = PlaybackMetrics(),
     val epgNowEpochMs: Long = System.currentTimeMillis(),
     val programs: List<EpgEntry> = emptyList(),
-    val currentProgramProgressPercent: Int? = null
+    val currentProgramProgressPercent: Int? = null,
+    val currentProgramElapsedMs: Long? = null,
+    val currentProgramTotalMs: Long? = null
 )
 
 sealed class PlaybackUiState {

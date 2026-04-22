@@ -22,6 +22,26 @@ object XmlTvParser {
         val programmeNodes = doc.getElementsByTagName("programme")
         val result = mutableListOf<EpgEntry>()
 
+        val channelDisplayNamesById = mutableMapOf<String, List<String>>()
+        val channelNodes = doc.getElementsByTagName("channel")
+
+        for (i in 0 until channelNodes.length) {
+            val channelEl = channelNodes.item(i) as? Element ?: continue
+            val id = channelEl.getAttribute("id").orEmpty().trim()
+            if (id.isBlank()) continue
+
+            val displayNames = mutableListOf<String>()
+            val dnNodes = channelEl.getElementsByTagName("display-name")
+            for (j in 0 until dnNodes.length) {
+                val dn = dnNodes.item(j)?.textContent?.trim().orEmpty()
+                if (dn.isNotBlank()) displayNames.add(dn)
+            }
+
+            if (displayNames.isNotEmpty()) {
+                channelDisplayNamesById[id] = displayNames
+            }
+        }
+
         for (i in 0 until programmeNodes.length) {
             val node = programmeNodes.item(i) as? Element ?: continue
 
@@ -54,7 +74,8 @@ object XmlTvParser {
                 title = title,
                 startEpochMs = startMs,
                 endEpochMs = endMs,
-                description = desc
+                description = desc,
+                sourceDisplayName = channelDisplayNamesById[channelId]?.firstOrNull()
             ))
         }
 
@@ -63,7 +84,7 @@ object XmlTvParser {
 
     private fun parseXmlTvDate(raw: String): Long? {
         return runCatching {
-            val cleaned = raw.trim().take(19)
+            val cleaned = raw.trim().replace(Regex("\\s+"), " ")
             xmlTvDateFormat.parse(cleaned)?.time
         }.getOrNull()
     }

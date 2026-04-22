@@ -34,7 +34,7 @@ class PlayerViewModel @Inject constructor(
     private val playerEngine = playerEngineFactory.create(playerVendorProvider.currentVendor())
 
     private companion object {
-        private const val TAG = "PlayerViewModel"
+        private const val TAG = "*|PlayerViewModel"
     }
     private var lastLoggedMetrics: PlaybackMetrics? = null
 
@@ -66,16 +66,7 @@ class PlayerViewModel @Inject constructor(
 
         viewModelScope.launch {
             while (true) {
-                val now = System.currentTimeMillis()
-                _uiState.update { current ->
-                    current.copy(
-                        epgNowEpochMs = now,
-                        currentProgramProgressPercent = calculateCurrentProgress(
-                            programs = current.programs,
-                            nowEpochMs = now
-                        )
-                    )
-                }
+                updateState()
                 delay(1_000L)
             }
         }
@@ -84,17 +75,8 @@ class PlayerViewModel @Inject constructor(
             while (true) {
                 val selected = _uiState.value.selectedChannel
                 if (selected != null) {
-                    val now = System.currentTimeMillis()
                     val programs = getProgramsForChannelUseCase(selected.id)
-                    _uiState.update { current ->
-                        current.copy(
-                            programs = programs,
-                            currentProgramProgressPercent = calculateCurrentProgress(
-                                programs = programs,
-                                nowEpochMs = now
-                            )
-                        )
-                    }
+                    updateState(programs = programs)
                 }
                 delay(30_000L)
             }
@@ -106,19 +88,8 @@ class PlayerViewModel @Inject constructor(
         if (current?.id == channel.id) return
 
         viewModelScope.launch {
-            val now = System.currentTimeMillis()
             val programs = getProgramsForChannelUseCase(channel.id)
-
-            _uiState.update {
-                it.copy(
-                    selectedChannel = channel,
-                    programs = programs,
-                    currentProgramProgressPercent = calculateCurrentProgress(
-                        programs = programs,
-                        nowEpochMs = now
-                    )
-                )
-            }
+            updateState(selectedChannel = channel, programs = programs)
 
             loadChannel(
                 channel = channel,
@@ -159,23 +130,43 @@ class PlayerViewModel @Inject constructor(
         )
     }
 
-    private fun calculateCurrentProgress(programs: List<EpgEntry>, nowEpochMs: Long): Int? {
-        val current = programs.firstOrNull() ?: return null
-        val total = (current.endEpochMs - current.startEpochMs).coerceAtLeast(1L)
-        val elapsed = (nowEpochMs - current.startEpochMs).coerceIn(0L, total)
-        return ((elapsed * 100) / total).toInt()
+    private fun currentProgram(programs: List<EpgEntry>, nowEpochMs: Long): EpgEntry? {
+        return programs.firstOrNull {
+            nowEpochMs >= it.startEpochMs && nowEpochMs < it.endEpochMs
+        }
+    }
+
+    private fun updateState(selectedChannel: Channel? = null, programs: List<EpgEntry>? = null) {
+        val current = _uiState.value
+        val now = System.currentTimeMillis()
+        val live = currentProgram(current.programs, now)
+        val total = live?.let {
+            (it.endEpochMs - it.startEpochMs).coerceAtLeast(1L)
+        }
+        val elapsed = live?.let {
+            (now - it.startEpochMs).coerceIn(0L, total ?: 1L)
+        }
+        val percent = if (elapsed != null && total != null) {
+            ((elapsed * 100) / total).toInt()
+        } else {
+            null
+        }
+
+        _uiState.update { current ->
+            current.copy(
+                selectedChannel = selectedChannel ?: current.selectedChannel,
+                programs = programs ?: current.programs,
+                epgNowEpochMs = now,
+                currentProgramProgressPercent = percent,
+                currentProgramElapsedMs = elapsed,
+                currentProgramTotalMs = total
+            )
+        }
     }
 
     private fun logMetricsIfChanged(metrics: PlaybackMetrics) {
         if (lastLoggedMetrics == metrics) return
         lastLoggedMetrics = metrics
-        Log.d(
-            TAG,
-            "QoE metrics -> startupMs=${metrics.startupTimeMs}, " +
-                "rebuffers=${metrics.rebufferCount}, " +
-                "rebufferTotalMs=${metrics.totalRebufferMs}," +
-                "fatalErrors=${metrics.fatalErrorCount}"
-        )
     }
 
     override fun onCleared() {

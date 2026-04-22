@@ -1,5 +1,7 @@
 package com.mivan.streamingsandbox.feature.channels.data.epg
 
+import android.util.Log
+import com.mivan.streamingsandbox.BuildConfig
 import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,19 +23,29 @@ class EpgRemoteDataSource @Inject constructor() {
     private val httpClient = OkHttpClient()
 
     private companion object {
-        private const val EPG_ES_XML_GZ_URL = "https://iptv-epg.org/files/epg-es.xml.gz"
+        private const val TAG = "*|EpgRemoteDataSource"
         private const val EPG_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
     }
 
-    suspend fun fetchPrograms(): List<EpgEntry> = withContext(Dispatchers.IO) {
+    suspend fun fetchPrograms(epgUrlOverride: String? = null): List<EpgEntry> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val cached = cachedEntries
         if (cached != null && (now - cachedAtEpochMs) < EPG_CACHE_TTL_MS) {
             return@withContext cached
         }
 
+        val effectiveEpgUrl = epgUrlOverride
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: BuildConfig.EPG_XML_GZ_URL
+                .trim()
+                .takeIf { it.isNotEmpty() }
+            ?: error("No EPG URL configured (override and BuildConfig are empty)")
+
+        Log.d(TAG, "Using EPG URL: $effectiveEpgUrl")
+
         val request = Request.Builder()
-            .url(EPG_ES_XML_GZ_URL)
+            .url(effectiveEpgUrl)
             .build()
 
         val responseBytes = httpClient.newCall(request).execute().use { response ->

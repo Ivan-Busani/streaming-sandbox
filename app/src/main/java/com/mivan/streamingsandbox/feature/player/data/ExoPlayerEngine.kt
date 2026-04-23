@@ -175,6 +175,10 @@ class ExoPlayerEngine @Inject constructor(
 
     override fun pause() = player.pause()
 
+    override fun seekToLiveEdge() {
+        player.seekToDefaultPosition()
+    }
+
     override fun currentPositionMs(): Long = player.currentPosition
 
     override fun release() = player.release()

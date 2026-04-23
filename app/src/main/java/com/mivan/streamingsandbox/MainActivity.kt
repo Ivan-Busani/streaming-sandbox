@@ -10,21 +10,40 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,6 +53,8 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.carousel.HorizontalMultiBrowseCarousel
+import androidx.compose.material3.carousel.rememberCarouselState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -44,11 +65,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
+import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.presentation.PlaybackUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerUiState
@@ -75,8 +100,11 @@ class MainActivity : ComponentActivity() {
                 PlayerScreen(
                     uiState = uiState,
                     onAttachPlayerView = vm::attachPlayerView,
+                    openChannelSelector = vm::openChannelSelector,
+                    onSelectChannel = vm::selectChannel,
                     onRetry = vm::retryCurrentChannel,
-                    onSelectChannel = vm::selectChannel
+                    onTogglePlayPause = vm::togglePlayPause,
+                    onGoToLive = vm::goToLive
                 )
             }
         }
@@ -96,14 +124,17 @@ class MainActivity : ComponentActivity() {
     private fun PlayerScreen(
         uiState: PlayerUiState,
         onAttachPlayerView: (View) -> Unit,
+        openChannelSelector: (open: Boolean) -> Unit,
+        onSelectChannel: (Channel) -> Unit,
         onRetry: () -> Unit,
-        onSelectChannel: (Channel) -> Unit
+        onTogglePlayPause: () -> Unit,
+        onGoToLive: () -> Unit
     ) {
+        var isPlayerControlsVisible by remember { mutableStateOf(false) }
         val drawerState = rememberDrawerState(
             initialValue = DrawerValue.Closed
         )
         val scope = rememberCoroutineScope()
-        var isPlayerControlsVisible by remember { mutableStateOf(false) }
 
         Scaffold { innerPadding ->
             ModalNavigationDrawer(
@@ -115,11 +146,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         SidebarDrawerContent(
                             uiState = uiState,
-                            onRetry = onRetry,
-                            onSelectChannel = { channel ->
-                                onSelectChannel(channel)
-                                scope.launch { drawerState.close() }
-                            }
+                            onRetry = onRetry
                         )
                     }
                 }
@@ -130,17 +157,29 @@ class MainActivity : ComponentActivity() {
                     VideoPlayerLayer(
                         onAttachPlayerView = onAttachPlayerView,
                         onControllerVisibilityChanged = { visible ->
-                            Log.d(TAG, "onControllerVisibilityChanged: $visible")
                             isPlayerControlsVisible = visible
                         }
                     )
 
+                    ChannelSelectorOverlay(
+                        visible = uiState.isChannelSelectorOpen,
+                        channels = uiState.channels,
+                        selectedChannel = uiState.selectedChannel,
+                        onSelectChannel = { channel ->
+                            onSelectChannel(channel)
+                            openChannelSelector(false)
+                        },
+                        onTapOut = {
+                            openChannelSelector(false)
+                        }
+                    )
+
                     ChannelTitleOverlay(
-                        title = uiState.selectedChannel?.name ?: "Sin canal seleccionado",
+                        selectedChannel = uiState.selectedChannel,
                         visible = isPlayerControlsVisible,
                         modifier = Modifier
                             .align(Alignment.TopCenter),
-                        onMenuClick = {
+                        onInfoClick = {
                             scope.launch {
                                 if (drawerState.currentValue == DrawerValue.Open) {
                                     drawerState.close()
@@ -148,20 +187,37 @@ class MainActivity : ComponentActivity() {
                                     drawerState.open()
                                 }
                             }
+                        },
+                        onChannelsMenuClick = {
+                            openChannelSelector(true)
                         }
                     )
 
-                    ProgramProgressOverlay(
+                    ChannelLoadingOverlay(
+                        modifier = Modifier.align(Alignment.Center),
+                        visible = uiState.selectedChannel != null &&
+                                uiState.playbackState == PlaybackUiState.Buffering,
+                        logoUrl = uiState.selectedChannel?.urlLogo
+                    )
+
+                    BottomControlsOverlay(
                         visible = isPlayerControlsVisible,
                         progressPercent = uiState.currentProgramProgressPercent,
                         elapsedMs = uiState.currentProgramElapsedMs,
                         totalMs = uiState.currentProgramTotalMs,
+                        showPauseIcon = uiState.playbackState == PlaybackUiState.Playing ||
+                                uiState.playbackState == PlaybackUiState.Buffering,
+                        playPauseEnabled = uiState.selectedChannel != null,
+                        onPlayPauseClick = onTogglePlayPause,
+                        goToLiveEnabled = uiState.selectedChannel != null,
+                        onGoToLiveClick = onGoToLive,
+                        isProgramLoading = uiState.isProgramsLoading,
                         modifier = Modifier.align(Alignment.BottomCenter)
                     )
 
                     NoChannelSelectedOverlay(
                         modifier = Modifier.align(Alignment.Center),
-                        visible = !isPlayerControlsVisible && uiState.selectedChannel == null
+                        visible = !uiState.isChannelSelectorOpen && uiState.selectedChannel == null
                     )
                 }
             }
@@ -182,7 +238,7 @@ class MainActivity : ComponentActivity() {
             factory = { context ->
                 val playerView = android.view.LayoutInflater.from(context)
                     .inflate(R.layout.player_view_live, null, false) as PlayerView
-                playerView.useController = false
+                playerView.useController = true
                 playerView.setControllerVisibilityListener(controllerVisibilityListener)
                 onAttachPlayerView(playerView)
                 playerView
@@ -195,7 +251,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun ChannelTitleOverlay(title: String, visible: Boolean, modifier: Modifier = Modifier, onMenuClick: () -> Unit) {
+    private fun ChannelTitleOverlay(selectedChannel: Channel?, visible: Boolean, modifier: Modifier = Modifier, onInfoClick: () -> Unit, onChannelsMenuClick: () -> Unit) {
         AnimatedVisibility(
             visible = visible,
             modifier = modifier,
@@ -209,29 +265,84 @@ class MainActivity : ComponentActivity() {
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onMenuClick) {
-                    Icon(
-                        imageVector = Icons.Outlined.Menu,
-                        contentDescription = "Abrir canales",
-                        tint = Color.White
-                    )
+                if (selectedChannel != null) {
+                    IconButton(onClick = onInfoClick) {
+                        Icon(
+                            imageVector = Icons.Outlined.Info,
+                            contentDescription = "Abrir información del canal",
+                            tint = Color.White
+                        )
+                    }
                 }
                 Text(
-                    text = title,
+                    text = selectedChannel?.name ?: "Sin canal seleccionado",
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
+                IconButton(onClick = onChannelsMenuClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.Tv,
+                        contentDescription = "Abrir selector de canales",
+                        tint = Color.White
+                    )
+                }
             }
         }
     }
 
     @Composable
-    private fun ProgramProgressOverlay(
+    private fun ChannelLoadingOverlay(
+        modifier: Modifier = Modifier,
+        visible: Boolean,
+        logoUrl: String? = null
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            modifier = modifier,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (logoUrl != null) {
+                        AsyncImage(
+                            model = logoUrl,
+                            contentDescription = "Logo del canal",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.size(64.dp)
+                        )
+                    }
+                    Text(
+                        text = "Sintonizando canal...",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun BottomControlsOverlay(
         visible: Boolean,
         progressPercent: Int?,
         elapsedMs: Long?,
         totalMs: Long?,
+        showPauseIcon: Boolean,
+        playPauseEnabled: Boolean,
+        onPlayPauseClick: () -> Unit,
+        goToLiveEnabled: Boolean,
+        onGoToLiveClick: () -> Unit,
+        isProgramLoading: Boolean,
         modifier: Modifier = Modifier
     ) {
         AnimatedVisibility(
@@ -242,23 +353,170 @@ class MainActivity : ComponentActivity() {
         ) {
             val progress = ((progressPercent ?: 0).coerceIn(0, 100)) / 100f
 
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.Black.copy(alpha = 0.45f))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                IconButton(
+                    onClick = onPlayPauseClick,
+                    enabled = playPauseEnabled,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = if (showPauseIcon) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (showPauseIcon) "Pausar" else "Reproducir",
+                        tint = if (playPauseEnabled) Color.White else Color.Gray,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
 
-                Text(
-                    text = "${formatDuration(elapsedMs)} / ${formatDuration(totalMs)}",
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodySmall
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (isProgramLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                    } else {
+                        Text(
+                            text = "${formatDuration(elapsedMs)} / ${formatDuration(totalMs)}",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(alpha = 0.15f))
+                        .clickable(enabled = goToLiveEnabled) {
+                            onGoToLiveClick()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (goToLiveEnabled) Color.Red else Color.Black)
+                        )
+                        Text(
+                            text = "LIVE",
+                            color = if (goToLiveEnabled) Color.White else Color.Black,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun ChannelSelectorOverlay(
+        modifier: Modifier = Modifier,
+        visible: Boolean,
+        channels: List<Channel>,
+        selectedChannel: Channel?,
+        onSelectChannel: (Channel) -> Unit,
+        onTapOut: (() -> Unit)? = null,
+    ) {
+        AnimatedVisibility(
+            modifier = modifier.fillMaxSize(),
+            visible = visible,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            onTapOut?.invoke()
+                        }
                 )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .background(Color.Black.copy(alpha = 0.80f))
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val initialIndex = channels.indexOfFirst { it.id == selectedChannel?.id }
+                        .takeIf { it >= 0 } ?: 0
+                    val carouselState = rememberCarouselState(
+                        initialItem = initialIndex,
+                        itemCount = { channels.size }
+                    )
+
+                    HorizontalMultiBrowseCarousel(
+                        state = carouselState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .wrapContentHeight()
+                            .padding(top = 16.dp, bottom = 16.dp),
+                        preferredItemWidth = 186.dp,
+                        itemSpacing = 8.dp,
+                        contentPadding = PaddingValues(horizontal = 16.dp)
+                    ) { i ->
+                        val channel = channels[i]
+                        val isSelected = channel.id == selectedChannel?.id
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.clickable { onSelectChannel(channel) }
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .height(150.dp)
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(
+                                        width = if (isSelected) 2.dp else 0.dp,
+                                        color = if (isSelected) Color(0xFF00E5FF) else Color.Transparent,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .background(Color.White)
+                            ) {
+                                AsyncImage(
+                                    modifier = Modifier.fillMaxSize(),
+                                    model = channel.urlLogo,
+                                    contentDescription = "Logo del canal",
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+
+                            Text(
+                                text = channel.name,
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -286,16 +544,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun SidebarDrawerContent(uiState: PlayerUiState, onRetry: () -> Unit, onSelectChannel: (Channel) -> Unit) {
-        val playbackText = when (uiState.playbackState) {
-            PlaybackUiState.Idle -> "Idle"
-            PlaybackUiState.Buffering -> "Buffering..."
-            PlaybackUiState.Ready -> "Ready"
-            PlaybackUiState.Playing -> "Playing"
-            PlaybackUiState.Ended -> "Ended"
-            is PlaybackUiState.Error -> "Error de reproducción"
-        }
-
+    private fun SidebarDrawerContent(uiState: PlayerUiState, onRetry: () -> Unit)  {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -303,46 +552,113 @@ class MainActivity : ComponentActivity() {
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "Total canales: ${uiState.channels.size}",
-                color = Color.White
-            )
+            if (uiState.selectedChannel != null) {
+                ChannelInfoSection(uiState.selectedChannel, uiState.playbackState)
+                ProgramTimelineSection(uiState.programs, uiState.isProgramsLoading, uiState.currentProgramProgressPercent)
+                // MetricsSection(metrics = uiState.metrics)
 
-            Text(
-                text = "Canal actual: ${uiState.selectedChannel?.name ?: "N/A"}",
-                color = Color.White
-            )
-            Text(
-                text = "Estado: $playbackText",
-                color = Color.White
-            )
+                if (uiState.playbackState is PlaybackUiState.Error) {
+                    ChannelErrorsSection(
+                        errorMessage = (uiState.playbackState).message,
+                        onRetry = onRetry
+                    )
+                }
+            }
+        }
+    }
 
-            HorizontalDivider()
+    @Composable
+    private fun ChannelsListSection(channels: List<Channel>, selectedChannel: Channel?, onSelectChannel: (Channel) -> Unit) {
+        Text(
+            text = "Total canales: ${channels.size}",
+            color = Color.White
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(channels, key = { it.id }) { channel ->
+                val isSelected = selectedChannel?.id == channel.id
+                Button(
+                    onClick = { onSelectChannel(channel) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isSelected) "✓ ${channel.name}" else channel.name)
+                }
+            }
+        }
+        HorizontalDivider()
+    }
 
-            Text(
-                text = "Timeline",
-                color = Color.White,
-                style = MaterialTheme.typography.titleSmall
-            )
+    @Composable
+    private fun ChannelInfoSection(channel: Channel, playbackState: PlaybackUiState) {
+        val playbackText = when (playbackState) {
+            PlaybackUiState.Idle -> "En espera"
+            PlaybackUiState.Buffering -> "Almacenando búfer..."
+            PlaybackUiState.Ready -> "En Pausa"
+            PlaybackUiState.Playing -> "Reproduciendo"
+            PlaybackUiState.Ended -> "Finalizado"
+            is PlaybackUiState.Error -> "Error de reproducción"
+        }
 
-            if (uiState.programs.isEmpty()) {
-                Text(
-                    text = "Sin programación disponible",
-                    color = Color.White.copy(alpha = 0.8f)
+        Text(
+            text = "Canal actual: ${channel.name}",
+            color = Color.White
+        )
+        AsyncImage(
+            model = channel.urlLogo,
+            contentDescription = "Logo del canal",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(64.dp)
+        )
+        Text(
+            text = "Estado: $playbackText",
+            color = Color.White
+        )
+
+        HorizontalDivider()
+    }
+
+    @Composable
+    private fun ProgramTimelineSection(programs: List<EpgEntry>, isProgramLoading: Boolean = false, currentProgramProgressPercent: Int?) {
+        Text(
+            text = "Programación",
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall
+        )
+
+        if (isProgramLoading) {
+            Row(
+                modifier = Modifier,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White
                 )
-            } else {
-                uiState.programs.forEachIndexed { index, program ->
+                Text(
+                    text = "Obteniendo programación...",
+                    color = Color.White
+                )
+            }
+        }
+        else if (programs.isEmpty()) {
+            Text(
+                text = "Sin programación disponible",
+                color = Color.White.copy(alpha = 0.8f)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(programs, key = { it.title }) { program ->
                     Text(
                         text = program.title,
                         color = Color.White
                     )
-
-                    if (index == 0) {
-                        Text(
-                            text = "Progreso: ${uiState.currentProgramProgressPercent?.let { "$it%" } ?: "N/A"}",
-                            color = Color.White
-                        )
-                    }
 
                     Text(
                         text = formatHourRange(program.startEpochMs, program.endEpochMs),
@@ -352,46 +668,27 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            HorizontalDivider()
+            /*
+            programs.forEachIndexed { index, program ->
+                Text(
+                    text = program.title,
+                    color = Color.White
+                )
 
-            MetricsSection(metrics = uiState.metrics)
-
-            if (uiState.playbackState is PlaybackUiState.Error) {
-                val errorMessage = (uiState.playbackState).message
-                if (errorMessage.contains("DRM", ignoreCase = true)) {
+                if (index == 0) {
                     Text(
-                        text = "Tip: verifica licenseUrl, headers y autorización del contenido.",
-                        color = Color(0xFFFFC107)
-                    )
-                } else {
-                    Text(
-                        text = errorMessage,
-                        color = Color.Red
+                        text = "Progreso: ${currentProgramProgressPercent?.let { "$it%" } ?: "N/A"}",
+                        color = Color.White
                     )
                 }
 
-                Button(
-                    onClick = onRetry,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Reintentar")
-                }
+                Text(
+                    text = formatHourRange(program.startEpochMs, program.endEpochMs),
+                    color = Color.White.copy(alpha = 0.75f),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(uiState.channels, key = { it.id }) { channel ->
-                    val isSelected = uiState.selectedChannel?.id == channel.id
-                    Button(
-                        onClick = { onSelectChannel(channel) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (isSelected) "✓ ${channel.name}" else channel.name)
-                    }
-                }
-            }
+             */
         }
     }
 
@@ -420,6 +717,31 @@ class MainActivity : ComponentActivity() {
             text = "Fatal errors: ${metrics.fatalErrorCount}",
             color = Color.White
         )
+        HorizontalDivider()
+    }
+
+    @Composable
+    private fun ChannelErrorsSection(errorMessage: String, onRetry: () -> Unit) {
+        if (errorMessage.contains("DRM", ignoreCase = true)) {
+            Text(
+                text = "Tip: verifica licenseUrl, headers y autorización del contenido.",
+                color = Color(0xFFFFC107)
+            )
+        } else {
+            Text(
+                text = errorMessage,
+                color = Color.Red
+            )
+        }
+
+        Button(
+            onClick = onRetry,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Reintentar")
+        }
+
+        HorizontalDivider()
     }
 }
 

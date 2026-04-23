@@ -81,7 +81,8 @@ class ChannelRepositoryImpl @Inject constructor(
                             id = id,
                             name = m3u.name,
                             type = streamType,
-                            url = m3u.url
+                            url = m3u.url,
+                            urlLogo = m3u.tvgLogo
                         )
                         builtChannels.add(channel)
 

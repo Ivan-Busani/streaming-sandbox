@@ -83,18 +83,34 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    fun openChannelSelector(open: Boolean = true) {
+        _uiState.update { current ->
+            current.copy(isChannelSelectorOpen = open)
+        }
+    }
+
     fun selectChannel(channel: Channel) {
         val current = _uiState.value.selectedChannel
         if (current?.id == channel.id) return
 
-        viewModelScope.launch {
-            val programs = getProgramsForChannelUseCase(channel.id)
-            updateState(selectedChannel = channel, programs = programs)
+        updateState(
+            selectedChannel = channel,
+            programs = emptyList(),
+            isProgramsLoading = true
+        )
 
-            loadChannel(
-                channel = channel,
-                seekToMs = 0L
-            )
+        loadChannel(channel, 0L)
+
+        viewModelScope.launch {
+            runCatching { getProgramsForChannelUseCase(channel.id) }
+                .onSuccess { programs ->
+                    if (_uiState.value.selectedChannel?.id != channel.id) return@onSuccess
+                    updateState(programs = programs, isProgramsLoading = false)
+                }
+                .onFailure { error ->
+                    Log.w(TAG, "EPG background load failed for ${channel.id}", error)
+                    updateState(programs = emptyList(), isProgramsLoading = false)
+                }
         }
     }
 
@@ -120,6 +136,23 @@ class PlayerViewModel @Inject constructor(
         playerEngine.attachView(view)
     }
 
+    fun togglePlayPause() {
+        val state = _uiState.value.playbackState
+        val active = state == PlaybackUiState.Playing || state == PlaybackUiState.Buffering
+
+        if (active) {
+            playerEngine.pause()
+        } else if (_uiState.value.selectedChannel != null) {
+            playerEngine.play()
+        }
+    }
+
+    fun goToLive() {
+        if (_uiState.value.selectedChannel == null) return
+        playerEngine.seekToLiveEdge()
+        playerEngine.play()
+    }
+
     private fun loadChannel(channel: Channel, seekToMs: Long) {
         playerEngine.prepare(
             channelId = channel.id,
@@ -136,7 +169,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun updateState(selectedChannel: Channel? = null, programs: List<EpgEntry>? = null) {
+    private fun updateState(selectedChannel: Channel? = null, programs: List<EpgEntry>? = null, isProgramsLoading: Boolean? = null) {
         val current = _uiState.value
         val now = System.currentTimeMillis()
         val live = currentProgram(current.programs, now)
@@ -159,7 +192,8 @@ class PlayerViewModel @Inject constructor(
                 epgNowEpochMs = now,
                 currentProgramProgressPercent = percent,
                 currentProgramElapsedMs = elapsed,
-                currentProgramTotalMs = total
+                currentProgramTotalMs = total,
+                isProgramsLoading = isProgramsLoading ?: current.isProgramsLoading
             )
         }
     }

@@ -5,6 +5,7 @@ import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 
 data class PlayerUiState(
+    val isChannelSelectorOpen: Boolean = false,
     val channels: List<Channel> = emptyList(),
     val selectedChannel: Channel? = null,
     val playbackState: PlaybackUiState = PlaybackUiState.Idle,
@@ -13,7 +14,8 @@ data class PlayerUiState(
     val programs: List<EpgEntry> = emptyList(),
     val currentProgramProgressPercent: Int? = null,
     val currentProgramElapsedMs: Long? = null,
-    val currentProgramTotalMs: Long? = null
+    val currentProgramTotalMs: Long? = null,
+    var isProgramsLoading: Boolean = false
 )
 
 sealed class PlaybackUiState {

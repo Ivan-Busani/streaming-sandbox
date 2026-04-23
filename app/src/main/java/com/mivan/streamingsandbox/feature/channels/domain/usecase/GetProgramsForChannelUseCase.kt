@@ -10,14 +10,12 @@ class GetProgramsForChannelUseCase @Inject constructor(
     suspend operator fun invoke(
         channelId: String,
         nowEpochMs: Long = System.currentTimeMillis(),
-        limit: Int = 5
     ): List<EpgEntry> {
         return channelRepository
             .getEpgEntries()
             .asSequence()
             .filter { it.channelId == channelId && it.endEpochMs > nowEpochMs }
             .sortedBy { it.startEpochMs }
-            .take(limit)
             .toList()
     }
 }

@@ -5,7 +5,8 @@ import android.util.Log
 data class M3uChannel(
     val name: String,
     val url: String,
-    val tvgId: String? = null
+    val tvgId: String? = null,
+    val tvgLogo: String? = null
 )
 
 data class M3uPlaylist(
@@ -27,6 +28,7 @@ object M3uParser {
         val channels = mutableListOf<M3uChannel>()
         var pendingName: String? = null
         var pendingTvgId: String? = null
+        var pendingTvgLogo: String? = null
 
         // Parse optional XMLTV endpoint for EXTM3U header.
         val firstLine = lines.firstOrNull().orEmpty()
@@ -39,7 +41,6 @@ object M3uParser {
 
         for (i in 0 until lines.size) {
             val line = lines[i]
-            Log.d(TAG, "Line ${i + 1}: $line")
             if (line.startsWith("#EXTINF", ignoreCase = true)) {
                 // EXTINF format: #EXTINF:-1 ... ,Channel Name
                 pendingName = line.substringAfterLast(",").trim().ifBlank { "Unnamed channel" }
@@ -51,6 +52,18 @@ object M3uParser {
                     ?.trim()
 
                 pendingTvgId = tvgIdMatch?.ifBlank { null }
+
+                val tvgLogoMatch = Regex("""tvg-logo="([^"]+)"""", RegexOption.IGNORE_CASE)
+                    .find(line)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.trim()
+
+                pendingTvgLogo = tvgLogoMatch?.ifBlank { null }
+
+                Log.d(TAG, "Logo URL: $pendingTvgLogo")
+
+
                 continue
             }
 
@@ -67,12 +80,14 @@ object M3uParser {
                 channels.add(M3uChannel(
                     name,
                     url,
-                    tvgId = pendingTvgId
+                    tvgId = pendingTvgId,
+                    tvgLogo = pendingTvgLogo
                 ))
             }
 
             pendingName = null
             pendingTvgId = null
+            pendingTvgLogo = null
         }
 
         return M3uPlaylist(

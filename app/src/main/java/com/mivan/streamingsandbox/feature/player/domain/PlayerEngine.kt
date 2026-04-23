@@ -26,6 +26,7 @@ interface PlayerEngine {
     )
     fun play()
     fun pause()
+    fun seekToLiveEdge()
     fun currentPositionMs(): Long
     fun release()
 }

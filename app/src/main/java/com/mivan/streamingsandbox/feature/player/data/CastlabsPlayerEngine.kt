@@ -38,6 +38,10 @@ class CastlabsPlayerEngine @Inject constructor() : PlayerEngine {
         TODO("Not yet implemented")
     }
 
+    override fun seekToLiveEdge() {
+        TODO("Not yet implemented")
+    }
+
     override fun currentPositionMs(): Long {
         TODO("Not yet implemented")
     }

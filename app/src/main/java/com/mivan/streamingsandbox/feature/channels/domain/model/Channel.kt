@@ -9,5 +9,6 @@ data class Channel(
     val name: String,
     val type: StreamType,
     val url: String,
+    val urlLogo: String? = null,
     val drm: DrmConfig? = null
 )

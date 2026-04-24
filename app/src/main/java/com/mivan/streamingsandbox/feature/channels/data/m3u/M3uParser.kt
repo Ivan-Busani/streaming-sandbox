@@ -60,10 +60,6 @@ object M3uParser {
                     ?.trim()
 
                 pendingTvgLogo = tvgLogoMatch?.ifBlank { null }
-
-                Log.d(TAG, "Logo URL: $pendingTvgLogo")
-
-
                 continue
             }
 

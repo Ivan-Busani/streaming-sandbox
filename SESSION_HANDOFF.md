@@ -1,6 +1,6 @@
 # StreamingSandbox — handoff para retomar
 
-**Fecha de referencia:** 2026-04-21
+**Fecha de referencia:** 2026-04-24
 
 ## Objetivo general
 
@@ -30,6 +30,10 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 
 - ☑ EPG + Live TV base (timeline en drawer, horarios, progreso, carga de canales por M3U con fallback)
 - ☑ EPG remoto España (`iptv-epg.org` gzip → `XmlTvParser`; match `tvg-id` M3U + fallback nombre; lista mapeada cacheada con TTL + invalidación por epoch de canales; simulado solo si mapping vacío o fallo fetch)
+- ☑ Persistencia EPG diaria en disco (cache por `dayKey`; reutiliza programación en reinicios del mismo día)
+- ☑ Precarga de EPG al abrir app + filtrado local por canal (sin esperar descarga al cambiar canal)
+- ☑ Selector de canales overlay (carrusel + cierre por tap fuera + selección directa)
+- ☑ Overlays de reproducción custom (play/pause + acción LIVE + indicador de carga de canal/programación)
 - ☐ Afinar cobertura EPG vs lista M3U (IDs distintos entre fuentes → % match bajo; curated M3U o mejor matching p. ej. `<channel>` XMLTV)
 - ☐ Timeshift (pausa en vivo) y Catchup (grabaciones)
 
@@ -86,6 +90,10 @@ Estado actual:
 - ☑ Live TV base completado: catálogo remoto `iptv-org` + cache TTL + fallback local.
 - ☑ Timeline básico en UI (programa actual/siguientes + rango horario + progreso).
 - ☑ EPG remoto integrado + caché del resultado mapeado (evita remapear todo el XML en cada consulta por canal).
+- ☑ EPG persistida por día en almacenamiento local; al reiniciar en el mismo día reutiliza cache sin refetch completo.
+- ☑ Flujo de canal optimizado: reproduce al seleccionar y carga/programa en segundo plano con refresh periódico de EPG.
+- ☑ UI de overlays extendida: loading central, timeline con programa en vivo, selector de canales tipo carrusel.
+- ☐ Estabilidad al minimizar/restaurar: mitigaciones aplicadas en `ExoPlayerEngine` (`ensurePlayer` + `runOnMain`), validar que no reaparezca `Handler on a dead thread`.
 - ☐ Afinar match EPG↔canales, Timeshift/Catchup, Cast y multi-DRM siguen pendientes.
 
 ## Vendors (Bitmovin / Castlabs)

@@ -42,8 +42,6 @@ class EpgRemoteDataSource @Inject constructor() {
                 .takeIf { it.isNotEmpty() }
             ?: error("No EPG URL configured (override and BuildConfig are empty)")
 
-        Log.d(TAG, "Using EPG URL: $effectiveEpgUrl")
-
         val request = Request.Builder()
             .url(effectiveEpgUrl)
             .build()

@@ -1,5 +1,6 @@
 package com.mivan.streamingsandbox.feature.channels.data.repository
 
+import android.content.Context
 import android.util.Log
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.channels.domain.model.StreamType
@@ -11,15 +12,23 @@ import com.mivan.streamingsandbox.BuildConfig
 import com.mivan.streamingsandbox.feature.channels.data.epg.EpgRemoteDataSource
 import com.mivan.streamingsandbox.feature.channels.data.m3u.M3uParser
 import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.text.Normalizer
+import java.time.LocalDate
+import androidx.core.content.edit
+import kotlin.math.abs
 
 class ChannelRepositoryImpl @Inject constructor(
+    @ApplicationContext context: Context,
     private val epgRemoteDataSource: EpgRemoteDataSource
 ) : ChannelRepository {
+    private val appContext: Context = context
+
     @Volatile
     private var cachedChannels: List<Channel>? = null
     private var cachedChannelsAtEpochMs: Long = 0L
@@ -43,6 +52,9 @@ class ChannelRepositoryImpl @Inject constructor(
         private const val REMOTE_LIMIT = 200
         private const val CACHE_TTL_MS = 6 * 60 * 60 * 1000L
         private const val MAPPED_EPG_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
+        private const val PREFS_NAME = "epg_cache_prefs"
+        private const val KEY_EPG_DAY = "epg_day"
+        private const val KEY_EPG_JSON = "epg_json"
     }
 
     override suspend fun getChannels(): List<Channel> {
@@ -113,7 +125,9 @@ class ChannelRepositoryImpl @Inject constructor(
                 remoteChannels
 
             }
-        }.getOrElse {
+        }.getOrElse { throwable ->
+            if (throwable is CancellationException) throw throwable
+
             cachedTvgIdToChannelId = emptyMap()
             val fallback = fallbackChannels()
             cachedChannels = fallback
@@ -129,20 +143,31 @@ class ChannelRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun getEpgEntries(): List<EpgEntry> {
+    override suspend fun getEpgEntries(force: Boolean?): List<EpgEntry> {
         val channels = cachedChannels ?: fallbackChannels()
         val now = System.currentTimeMillis()
 
-        val cachedEntries = cachedMappedEpgEntries
-        val ageMs = now - cachedMappedEpgAtEpochMs
-        val ttlOk = ageMs < MAPPED_EPG_CACHE_TTL_MS
-        val channelsEpochOk = cachedMappedEpgForChannelsEpochMs == cachedChannelsAtEpochMs
-        if (cachedEntries != null && ttlOk && channelsEpochOk) {
-            Log.d(
-                TAG,
-                "EPG mapped cache HIT: entries=${cachedEntries.size}, ageMs=$ageMs, epgEpoch=$cachedMappedEpgForChannelsEpochMs, channelsEpoch=$cachedChannelsAtEpochMs"
-            )
-            return cachedEntries
+        force?.let {
+            if (!it) {
+                // 1) Memory Cache
+                val cachedEntries = cachedMappedEpgEntries
+                val ageMs = now - cachedMappedEpgAtEpochMs
+                val ttlOk = ageMs < MAPPED_EPG_CACHE_TTL_MS
+                val channelsEpochOk = cachedMappedEpgForChannelsEpochMs == cachedChannelsAtEpochMs
+
+                if (cachedEntries != null && ttlOk && channelsEpochOk) {
+                    return cachedEntries
+                }
+
+                // 2) Persisted Cache (today)
+                val persistedToday = readPersistedEpgForToday()
+                if (persistedToday != null) {
+                    cachedMappedEpgEntries = persistedToday
+                    cachedMappedEpgAtEpochMs = now
+                    cachedMappedEpgForChannelsEpochMs = cachedChannelsAtEpochMs
+                    return persistedToday
+                }
+            }
         }
 
         return withContext(Dispatchers.Default) {
@@ -150,42 +175,32 @@ class ChannelRepositoryImpl @Inject constructor(
                 val remotePrograms = epgRemoteDataSource.fetchPrograms(cachedSourceEpgUrl)
                 val mapped = mapRemoteEpgToKnownChannels(remotePrograms, channels)
 
-                val matchedChannelIds = mapped.map { it.channelId }.toSet()
-
-                val channelsWithEpg = channels.count { it.id in matchedChannelIds }
-                val channelCoveragePercent = if (channels.isEmpty()) 0 else (channelsWithEpg * 100) / channels.size
-
-                Log.d(
-                    TAG,
-                    "EPG channel coverage: $channelsWithEpg/${channels.size} ($channelCoveragePercent%)"
-                )
-
                 val result = mapped.ifEmpty {
-                    Log.d(TAG, "Mapped EPG is empty, using simulated fallback")
                     buildFallbackEpgForChannels(channels)
                 }
 
+                // Memory Cache
                 cachedMappedEpgEntries = result
                 cachedMappedEpgAtEpochMs = now
                 cachedMappedEpgForChannelsEpochMs = cachedChannelsAtEpochMs
 
-                Log.d(
-                    TAG,
-                    "EPG mapped cache STORE: entries=${result.size}, channelsEpoch=$cachedChannelsAtEpochMs"
-                )
+                // Persisted Cache
+                persistEpg(result)
 
                 result
             }.getOrElse { throwable ->
-                Log.e(TAG, "EPG fetch/map failed, using simulated fallback", throwable)
+                if (throwable is CancellationException) throw throwable
+
                 val fallback = buildFallbackEpgForChannels(channels)
-                // Cache fallback too, so next calls can HIT instead of remapping every time
+
+                // Memory Cache
                 cachedMappedEpgEntries = fallback
                 cachedMappedEpgAtEpochMs = now
                 cachedMappedEpgForChannelsEpochMs = cachedChannelsAtEpochMs
-                Log.d(
-                    TAG,
-                    "EPG mapped cache STORE (fallback): entries=${fallback.size}, channelsEpoch=$cachedChannelsAtEpochMs"
-                )
+
+                // Persisted Cache
+                persistEpg(fallback)
+
                 fallback
             }
         }
@@ -230,7 +245,7 @@ class ChannelRepositoryImpl @Inject constructor(
     private fun buildFallbackEpgForChannels(channels: List<Channel>): List<EpgEntry> {
         val minuteMs = 60 * 1000L
         return channels.flatMap { channel ->
-            val jitterMin = kotlin.math.abs(channel.id.hashCode()) % 10
+            val jitterMin = abs(channel.id.hashCode()) % 10
             val offsetMs = jitterMin * minuteMs
 
             val currentStart = epgBaseEpochMs - 10 * minuteMs + offsetMs
@@ -344,4 +359,60 @@ class ChannelRepositoryImpl @Inject constructor(
 
     private fun applyAlias(normalized: String): String =
         configuredAliases[normalized] ?: normalized
+
+    private fun todayKey(): String = LocalDate.now().toString()
+
+    private fun readPersistedEpgForToday(): List<EpgEntry>? {
+        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val day = prefs.getString(KEY_EPG_DAY, null) ?: return null
+        if (day != todayKey()) return null
+
+        val json = prefs.getString(KEY_EPG_JSON, null) ?: return null
+        return runCatching {
+            jsonToEpgEntries(json)
+        }.getOrNull()
+    }
+
+    private fun persistEpg(entries: List<EpgEntry>) {
+        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit {
+            putString(KEY_EPG_DAY, todayKey())
+            putString(KEY_EPG_JSON, epgEntriesToJson(entries))
+        }
+    }
+
+    private fun epgEntriesToJson(entries: List<EpgEntry>): String {
+        val arr = org.json.JSONArray()
+        entries.forEach { entry ->
+            arr.put(
+                org.json.JSONObject()
+                    .put("channelId", entry.channelId)
+                    .put("title", entry.title)
+                    .put("startEpochMs", entry.startEpochMs)
+                    .put("endEpochMs", entry.endEpochMs)
+                    .put("description", entry.description)
+                    .put("sourceDisplayName", entry.sourceDisplayName)
+            )
+        }
+        return arr.toString()
+    }
+
+    private fun jsonToEpgEntries(json: String): List<EpgEntry> {
+        val arr = org.json.JSONArray(json)
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                add(
+                    EpgEntry(
+                        channelId = obj.getString("channelId"),
+                        title = obj.getString("title"),
+                        startEpochMs = obj.getLong("startEpochMs"),
+                        endEpochMs = obj.getLong("endEpochMs"),
+                        description = obj.optString("description").takeIf { it.isNotBlank() },
+                        sourceDisplayName = obj.optString("sourceDisplayName").takeIf { it.isNotBlank() }
+                    )
+                )
+            }
+        }
+    }
 }

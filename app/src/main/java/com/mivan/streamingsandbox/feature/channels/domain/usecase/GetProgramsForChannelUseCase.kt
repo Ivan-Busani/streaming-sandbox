@@ -1,20 +1,27 @@
 package com.mivan.streamingsandbox.feature.channels.domain.usecase
 
 import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
-import com.mivan.streamingsandbox.feature.channels.domain.repository.ChannelRepository
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
-class GetProgramsForChannelUseCase @Inject constructor(
-    private val channelRepository: ChannelRepository
-) {
-    suspend operator fun invoke(
+class GetProgramsForChannelUseCase @Inject constructor() {
+    operator fun invoke(
         channelId: String,
-        nowEpochMs: Long = System.currentTimeMillis(),
+        epg: List<EpgEntry>
     ): List<EpgEntry> {
-        return channelRepository
-            .getEpgEntries()
+        val nowEpochMs = System.currentTimeMillis()
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now()
+
+        val startOfDayMs = today.atStartOfDay(zone).toInstant().toEpochMilli()
+        val startOfNextDayMs = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+
+        return epg
             .asSequence()
-            .filter { it.channelId == channelId && it.endEpochMs > nowEpochMs }
+            .filter { it.channelId == channelId }
+            .filter { it.endEpochMs > nowEpochMs }
+            .filter { it.endEpochMs > startOfDayMs && it.startEpochMs < startOfNextDayMs }
             .sortedBy { it.startEpochMs }
             .toList()
     }

@@ -38,7 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -57,6 +57,7 @@ import androidx.compose.material3.carousel.HorizontalMultiBrowseCarousel
 import androidx.compose.material3.carousel.rememberCarouselState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +69,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
@@ -79,6 +81,7 @@ import com.mivan.streamingsandbox.feature.player.presentation.PlaybackUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerViewModel
 import com.mivan.streamingsandbox.ui.theme.StreamingSandboxTheme
+import com.mivan.streamingsandbox.ui.utils.getImageBgColorFromUrl
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -103,6 +106,7 @@ class MainActivity : ComponentActivity() {
                     openChannelSelector = vm::openChannelSelector,
                     onSelectChannel = vm::selectChannel,
                     onRetry = vm::retryCurrentChannel,
+                    onProgramRefresh = vm::refreshEpg,
                     onTogglePlayPause = vm::togglePlayPause,
                     onGoToLive = vm::goToLive
                 )
@@ -120,6 +124,10 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+    }
+
     @Composable
     private fun PlayerScreen(
         uiState: PlayerUiState,
@@ -127,6 +135,7 @@ class MainActivity : ComponentActivity() {
         openChannelSelector: (open: Boolean) -> Unit,
         onSelectChannel: (Channel) -> Unit,
         onRetry: () -> Unit,
+        onProgramRefresh: (force: Boolean?) -> Unit,
         onTogglePlayPause: () -> Unit,
         onGoToLive: () -> Unit
     ) {
@@ -146,7 +155,8 @@ class MainActivity : ComponentActivity() {
                     ) {
                         SidebarDrawerContent(
                             uiState = uiState,
-                            onRetry = onRetry
+                            onRetry = onRetry,
+                            onProgramRefresh = onProgramRefresh
                         )
                     }
                 }
@@ -240,12 +250,10 @@ class MainActivity : ComponentActivity() {
                     .inflate(R.layout.player_view_live, null, false) as PlayerView
                 playerView.useController = true
                 playerView.setControllerVisibilityListener(controllerVisibilityListener)
-                onAttachPlayerView(playerView)
                 playerView
             },
             update = { view ->
                 onAttachPlayerView(view)
-                view.setControllerVisibilityListener(controllerVisibilityListener)
             }
         )
     }
@@ -314,12 +322,31 @@ class MainActivity : ComponentActivity() {
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (logoUrl != null) {
-                        AsyncImage(
-                            model = logoUrl,
-                            contentDescription = "Logo del canal",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.size(64.dp)
-                        )
+                        val context = LocalContext.current
+                        val fallback = MaterialTheme.colorScheme.surfaceVariant
+                        var bgColor by remember(logoUrl) { mutableStateOf(fallback) }
+                        LaunchedEffect(logoUrl) {
+                            bgColor = getImageBgColorFromUrl(
+                                context = context,
+                                imageUrl = logoUrl,
+                                fallbackColor = fallback
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(bgColor)
+                                .padding(6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                modifier = Modifier.fillMaxSize(),
+                                model = logoUrl,
+                                contentDescription = "Logo del canal",
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                     }
                     Text(
                         text = "Sintonizando canal...",
@@ -483,6 +510,20 @@ class MainActivity : ComponentActivity() {
                         val channel = channels[i]
                         val isSelected = channel.id == selectedChannel?.id
 
+                        val context = LocalContext.current
+                        val fallback = MaterialTheme.colorScheme.surfaceVariant
+                        var bgColor by remember(channel.urlLogo) { mutableStateOf(fallback) }
+
+                        if (channel.urlLogo != null) {
+                            LaunchedEffect(channel.urlLogo) {
+                                bgColor = getImageBgColorFromUrl(
+                                    context = context,
+                                    imageUrl = channel.urlLogo,
+                                    fallbackColor = fallback
+                                )
+                            }
+                        }
+
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -498,7 +539,7 @@ class MainActivity : ComponentActivity() {
                                         color = if (isSelected) Color(0xFF00E5FF) else Color.Transparent,
                                         shape = RoundedCornerShape(12.dp)
                                     )
-                                    .background(Color.White)
+                                    .background(bgColor)
                             ) {
                                 AsyncImage(
                                     modifier = Modifier.fillMaxSize(),
@@ -544,7 +585,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun SidebarDrawerContent(uiState: PlayerUiState, onRetry: () -> Unit)  {
+    private fun SidebarDrawerContent(uiState: PlayerUiState, onRetry: () -> Unit, onProgramRefresh: (force: Boolean?) -> Unit)  {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -554,7 +595,12 @@ class MainActivity : ComponentActivity() {
         ) {
             if (uiState.selectedChannel != null) {
                 ChannelInfoSection(uiState.selectedChannel, uiState.playbackState)
-                ProgramTimelineSection(uiState.programs, uiState.isProgramsLoading, uiState.currentProgramProgressPercent)
+                ProgramTimelineSection(
+                    programs = uiState.programs,
+                    onProgramRefreshClick = onProgramRefresh,
+                    isProgramLoading = uiState.isProgramsLoading,
+                    currentProgramProgressPercent = uiState.currentProgramProgressPercent
+                )
                 // MetricsSection(metrics = uiState.metrics)
 
                 if (uiState.playbackState is PlaybackUiState.Error) {
@@ -602,15 +648,40 @@ class MainActivity : ComponentActivity() {
         }
 
         Text(
-            text = "Canal actual: ${channel.name}",
+            text = "Sintonizado: ${channel.name}",
             color = Color.White
         )
-        AsyncImage(
-            model = channel.urlLogo,
-            contentDescription = "Logo del canal",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.size(64.dp)
-        )
+
+        val context = LocalContext.current
+        val fallback = MaterialTheme.colorScheme.surfaceVariant
+        var bgColor by remember(channel.urlLogo) { mutableStateOf(fallback) }
+
+        if (channel.urlLogo != null) {
+            LaunchedEffect(channel.urlLogo) {
+                bgColor = getImageBgColorFromUrl(
+                    context = context,
+                    imageUrl = channel.urlLogo,
+                    fallbackColor = fallback
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(bgColor)
+                .padding(6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                modifier = Modifier.fillMaxSize(),
+                model = channel.urlLogo,
+                contentDescription = "Logo del canal",
+                contentScale = ContentScale.Fit
+            )
+        }
         Text(
             text = "Estado: $playbackText",
             color = Color.White
@@ -620,12 +691,32 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun ProgramTimelineSection(programs: List<EpgEntry>, isProgramLoading: Boolean = false, currentProgramProgressPercent: Int?) {
-        Text(
-            text = "Programación",
-            color = Color.White,
-            style = MaterialTheme.typography.titleSmall
-        )
+    private fun ProgramTimelineSection(
+        programs: List<EpgEntry>,
+        onProgramRefreshClick: (force: Boolean?) -> Unit,
+        isProgramLoading: Boolean = false,
+        currentProgramProgressPercent: Int?
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Programación",
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall
+            )
+            IconButton(
+                onClick = { onProgramRefreshClick(true) },
+                enabled = !isProgramLoading,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Refresh,
+                    contentDescription = "Actualizar programación",
+                )
+            }
+        }
 
         if (isProgramLoading) {
             Row(
@@ -646,7 +737,7 @@ class MainActivity : ComponentActivity() {
         }
         else if (programs.isEmpty()) {
             Text(
-                text = "Sin programación disponible",
+                text = "Programación no disponible",
                 color = Color.White.copy(alpha = 0.8f)
             )
         } else {
@@ -654,41 +745,38 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(programs, key = { it.title }) { program ->
+                val now = System.currentTimeMillis()
+                items(
+                    programs,
+                    key = { "${it.channelId}-${it.startEpochMs}-${it.endEpochMs}-${it.title}" }
+                ) { program ->
+                    val isLive = now >= program.startEpochMs && now < program.endEpochMs
                     Text(
                         text = program.title,
-                        color = Color.White
+                        color = if (isLive) Color(0xFF00E5FF) else Color.White
                     )
+                    if (isLive) {
+                        val progressPercent = (currentProgramProgressPercent ?: 0).coerceIn(0, 100)
+                        val progress = progressPercent / 100f
 
+                        Text(
+                            text = "Progreso: $progressPercent%",
+                            color = Color(0xFF00E5FF),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     Text(
                         text = formatHourRange(program.startEpochMs, program.endEpochMs),
-                        color = Color.White.copy(alpha = 0.75f),
+                        color = if (isLive) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.75f),
                         style = MaterialTheme.typography.bodySmall
                     )
+                    HorizontalDivider()
                 }
             }
-
-            /*
-            programs.forEachIndexed { index, program ->
-                Text(
-                    text = program.title,
-                    color = Color.White
-                )
-
-                if (index == 0) {
-                    Text(
-                        text = "Progreso: ${currentProgramProgressPercent?.let { "$it%" } ?: "N/A"}",
-                        color = Color.White
-                    )
-                }
-
-                Text(
-                    text = formatHourRange(program.startEpochMs, program.endEpochMs),
-                    color = Color.White.copy(alpha = 0.75f),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-             */
         }
     }
 
@@ -746,7 +834,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private fun formatHourRange(startEpochMs: Long, endEpochMs: Long): String {
-    val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val formatter = SimpleDateFormat("hh:mm a", Locale.getDefault())
     val start = formatter.format(Date(startEpochMs))
     val end = formatter.format(Date(endEpochMs))
     return "$start - $end"

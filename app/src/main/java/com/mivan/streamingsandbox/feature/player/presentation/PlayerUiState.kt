@@ -9,13 +9,20 @@ data class PlayerUiState(
     val channels: List<Channel> = emptyList(),
     val selectedChannel: Channel? = null,
     val playbackState: PlaybackUiState = PlaybackUiState.Idle,
-    val metrics: PlaybackMetrics = PlaybackMetrics(),
+    val playbackPositionMs: Long? = null,
+    val playbackDurationMs: Long? = null,
     val epgNowEpochMs: Long = System.currentTimeMillis(),
     val programs: List<EpgEntry> = emptyList(),
     val currentProgramProgressPercent: Int? = null,
     val currentProgramElapsedMs: Long? = null,
     val currentProgramTotalMs: Long? = null,
-    var isProgramsLoading: Boolean = false
+    val liveOffsetMs: Long? = null,
+    val isBehindLive: Boolean = false,
+    var isProgramsLoading: Boolean = false,
+    val canSeekLiveDvr: Boolean = false,
+    /** True after channel change until first Ready/Playing/Error (initial tune). */
+    val isTuningChannel: Boolean = false,
+    val metrics: PlaybackMetrics = PlaybackMetrics()
 )
 
 sealed class PlaybackUiState {

@@ -23,30 +23,48 @@ class CastlabsPlayerEngine @Inject constructor() : PlayerEngine {
     private var rebufferStartMs: Long? = null
 
     override fun attachView(view: View) {
-        TODO("Not yet implemented")
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
+    }
+
+    override fun detachView(view: View) {
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 
     override fun prepare(channelId: String, url: String, playWhenReady: Boolean, seekToMs: Long, drm: DrmConfig?) {
-        _state.value = PlayerEngineState.Error("Castlabs no integrado aun.")
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 
     override fun play() {
-        TODO("Not yet implemented")
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 
     override fun pause() {
-        TODO("Not yet implemented")
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
+    }
+
+    override fun isCurrentLive(): Boolean = false
+
+    override fun isLiveDvrSeekable(): Boolean = false
+
+    override fun seekBack() {
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
+    }
+
+    override fun seekForward() {
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 
     override fun seekToLiveEdge() {
-        TODO("Not yet implemented")
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 
-    override fun currentPositionMs(): Long {
-        TODO("Not yet implemented")
-    }
+    override fun liveOffsetMs(): Long? = null
+
+    override fun durationMs(): Long = 0L
+
+    override fun currentPositionMs(): Long = 0L
 
     override fun release() {
-        TODO("Not yet implemented")
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 }

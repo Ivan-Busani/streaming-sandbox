@@ -17,6 +17,7 @@ interface PlayerEngine {
     val metrics: StateFlow<PlaybackMetrics>
 
     fun attachView(view: View)
+    fun detachView(view: View)
     fun prepare(
         channelId: String,
         url: String,
@@ -26,7 +27,13 @@ interface PlayerEngine {
     )
     fun play()
     fun pause()
+    fun isCurrentLive(): Boolean
+    fun isLiveDvrSeekable(): Boolean
+    fun seekBack()
+    fun seekForward()
     fun seekToLiveEdge()
+    fun liveOffsetMs(): Long?
+    fun durationMs(): Long
     fun currentPositionMs(): Long
     fun release()
 }

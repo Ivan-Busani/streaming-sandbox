@@ -1,6 +1,5 @@
 package com.mivan.streamingsandbox.feature.player.presentation
 
-import android.util.Log
 import android.view.View
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.ViewModel
@@ -32,17 +31,27 @@ class PlayerViewModel @Inject constructor(
     playerEngineFactory: PlayerEngineFactory,
     playerVendorProvider: PlayerVendorProvider
 ) : ViewModel() {
+    private companion object {
+        private const val TAG = "*|PlayerViewModel"
+        private const val LIVE_ENTER_BEHIND_MS = 15_000L
+        private const val LIVE_EXIT_BEHIND_MS = 8_000L
+        private const val GO_LIVE_GRACE_MS = 12_000L
+        private const val GO_LIVE_GRACE_BUFFER_EXTEND_MS = 1_500L
+        private const val GO_LIVE_GRACE_MAX_MS = 28_000L
+    }
+
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private val playerEngine = playerEngineFactory.create(playerVendorProvider.currentVendor())
     private val allEpg = MutableStateFlow<List<EpgEntry>>(emptyList())
+    private var goLiveGraceUntilMs: Long = 0L
+    private var goLiveGraceStartedAtMs: Long = 0L
     private var refreshEpgJob: Job? = null
-
-    private companion object {
-        private const val TAG = "*|PlayerViewModel"
-    }
     private var lastLoggedMetrics: PlaybackMetrics? = null
+
+    /** Avoid clearing tuning on stale Playing/Ready from the previous channel after prepare(). */
+    private var sawIdleOrBufferingSinceTuneStarted = false
 
     init {
         // Load channels
@@ -60,8 +69,29 @@ class PlayerViewModel @Inject constructor(
         // Player state
         viewModelScope.launch {
             playerEngine.state.collect { engineState ->
-                _uiState.update { current ->
-                    current.copy(playbackState = engineState.toUiState())
+                val current = _uiState.value
+                if (current.isTuningChannel) {
+                    when (engineState) {
+                        PlayerEngineState.Idle,
+                        PlayerEngineState.Buffering -> sawIdleOrBufferingSinceTuneStarted = true
+                        else -> Unit
+                    }
+                }
+                val tuningFinished = current.isTuningChannel && when (engineState) {
+                    is PlayerEngineState.Error -> true
+                    PlayerEngineState.Ready,
+                    PlayerEngineState.Playing,
+                    PlayerEngineState.Ended -> sawIdleOrBufferingSinceTuneStarted
+                    else -> false
+                }
+                if (tuningFinished) {
+                    sawIdleOrBufferingSinceTuneStarted = false
+                }
+                _uiState.update { cur ->
+                    cur.copy(
+                        playbackState = engineState.toUiState(),
+                        isTuningChannel = if (tuningFinished) false else cur.isTuningChannel
+                    )
                 }
             }
         }
@@ -103,6 +133,13 @@ class PlayerViewModel @Inject constructor(
         val current = _uiState.value.selectedChannel
         if (current?.id == channel.id) return
 
+        goLiveGraceUntilMs = 0L
+        goLiveGraceStartedAtMs = 0L
+        sawIdleOrBufferingSinceTuneStarted = false
+        _uiState.update { state ->
+            state.copy(isBehindLive = false, isTuningChannel = true)
+        }
+
         updateState(
             selectedChannel = channel,
             programs = emptyList()
@@ -125,6 +162,8 @@ class PlayerViewModel @Inject constructor(
 
     fun retryCurrentChannel() {
         val current = _uiState.value.selectedChannel ?: return
+        sawIdleOrBufferingSinceTuneStarted = false
+        _uiState.update { it.copy(isTuningChannel = true) }
         loadChannel(
             channel = current,
             seekToMs = playerEngine.currentPositionMs()
@@ -145,6 +184,10 @@ class PlayerViewModel @Inject constructor(
         playerEngine.attachView(view)
     }
 
+    fun detachPlayerView(view: View) {
+        playerEngine.detachView(view)
+    }
+
     fun togglePlayPause() {
         val state = _uiState.value.playbackState
         val active = state == PlaybackUiState.Playing || state == PlaybackUiState.Buffering
@@ -158,8 +201,21 @@ class PlayerViewModel @Inject constructor(
 
     fun goToLive() {
         if (_uiState.value.selectedChannel == null) return
+        val now = System.currentTimeMillis()
+        goLiveGraceStartedAtMs = now
+        goLiveGraceUntilMs = now + GO_LIVE_GRACE_MS
         playerEngine.seekToLiveEdge()
         playerEngine.play()
+    }
+
+    fun seekBack() {
+        if (_uiState.value.selectedChannel == null) return
+        playerEngine.seekBack()
+    }
+
+    fun seekForward() {
+        if (_uiState.value.selectedChannel == null) return
+        playerEngine.seekForward()
     }
 
     fun refreshEpg(force: Boolean? = false) {
@@ -194,6 +250,94 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private fun updateState(selectedChannel: Channel? = null, programs: List<EpgEntry>? = null, isProgramsLoading: Boolean? = null) {
+        val current = _uiState.value
+        val now = System.currentTimeMillis()
+
+        val nextPrograms = programs ?: current.programs
+
+        // Do not read old player/timeline values while tuning — avoids stale UI from previous channel.
+        if (current.isTuningChannel) {
+            _uiState.update { cur ->
+                cur.copy(
+                    selectedChannel = selectedChannel ?: cur.selectedChannel,
+                    programs = nextPrograms,
+                    epgNowEpochMs = now,
+                    playbackPositionMs = null,
+                    playbackDurationMs = null,
+                    liveOffsetMs = null,
+                    isBehindLive = false,
+                    currentProgramProgressPercent = null,
+                    currentProgramElapsedMs = null,
+                    currentProgramTotalMs = null,
+                    canSeekLiveDvr = false,
+                    isProgramsLoading = isProgramsLoading ?: cur.isProgramsLoading
+                )
+            }
+            return
+        }
+
+        val liveOffsetMs = playerEngine.liveOffsetMs()
+        val previousBehind = current.isBehindLive
+        val isLiveStream = playerEngine.isCurrentLive()
+
+        val isBehindLive = when {
+            !isLiveStream -> false
+            liveOffsetMs == null -> previousBehind
+            previousBehind -> liveOffsetMs > LIVE_EXIT_BEHIND_MS
+            else -> liveOffsetMs > LIVE_ENTER_BEHIND_MS
+        }
+        val inGoLiveGrace = now < goLiveGraceUntilMs
+        if (inGoLiveGrace && current.playbackState == PlaybackUiState.Buffering && goLiveGraceStartedAtMs > 0L) {
+            val graceCap = goLiveGraceStartedAtMs + GO_LIVE_GRACE_MAX_MS
+            val extended = goLiveGraceUntilMs + GO_LIVE_GRACE_BUFFER_EXTEND_MS
+            goLiveGraceUntilMs = minOf(extended, graceCap)
+        }
+
+        val effectiveIsBehindLive = if (now < goLiveGraceUntilMs) false else isBehindLive
+        val live = currentProgram(nextPrograms, now)
+
+        val hasEpgProgram = live != null
+
+        val total = live?.let {
+            (it.endEpochMs - it.startEpochMs).coerceAtLeast(1L)
+        }
+        val elapsed = live?.let {
+            (now - it.startEpochMs).coerceIn(0L, total ?: 1L)
+        }
+        val percent = if (elapsed != null && total != null) {
+            ((elapsed * 100) / total).toInt()
+        } else {
+            null
+        }
+
+        val playbackPos = playerEngine.currentPositionMs().takeIf { it >= 0L }
+        val playbackDur = if (!hasEpgProgram && isLiveStream) {
+            null
+        } else {
+            playerEngine.durationMs()
+        }
+
+        val canSeekLiveDvr = playerEngine.isLiveDvrSeekable()
+
+        _uiState.update { current ->
+            current.copy(
+                selectedChannel = selectedChannel ?: current.selectedChannel,
+                playbackPositionMs = playbackPos,
+                playbackDurationMs = playbackDur,
+                programs = nextPrograms,
+                epgNowEpochMs = now,
+                currentProgramProgressPercent = percent,
+                currentProgramElapsedMs = elapsed,
+                currentProgramTotalMs = total,
+                liveOffsetMs = liveOffsetMs,
+                isBehindLive = effectiveIsBehindLive,
+                isProgramsLoading = isProgramsLoading ?: current.isProgramsLoading,
+                canSeekLiveDvr = canSeekLiveDvr
+            )
+        }
+    }
+
     private fun loadChannel(channel: Channel, seekToMs: Long) {
         playerEngine.prepare(
             channelId = channel.id,
@@ -207,36 +351,6 @@ class PlayerViewModel @Inject constructor(
     private fun currentProgram(programs: List<EpgEntry>, nowEpochMs: Long): EpgEntry? {
         return programs.firstOrNull {
             nowEpochMs >= it.startEpochMs && nowEpochMs < it.endEpochMs
-        }
-    }
-
-    private fun updateState(selectedChannel: Channel? = null, programs: List<EpgEntry>? = null, isProgramsLoading: Boolean? = null) {
-        val current = _uiState.value
-        val now = System.currentTimeMillis()
-        val nextPrograms = programs ?: current.programs
-        val live = currentProgram(nextPrograms, now)
-        val total = live?.let {
-            (it.endEpochMs - it.startEpochMs).coerceAtLeast(1L)
-        }
-        val elapsed = live?.let {
-            (now - it.startEpochMs).coerceIn(0L, total ?: 1L)
-        }
-        val percent = if (elapsed != null && total != null) {
-            ((elapsed * 100) / total).toInt()
-        } else {
-            null
-        }
-
-        _uiState.update { current ->
-            current.copy(
-                selectedChannel = selectedChannel ?: current.selectedChannel,
-                programs = nextPrograms,
-                epgNowEpochMs = now,
-                currentProgramProgressPercent = percent,
-                currentProgramElapsedMs = elapsed,
-                currentProgramTotalMs = total,
-                isProgramsLoading = isProgramsLoading ?: current.isProgramsLoading
-            )
         }
     }
 

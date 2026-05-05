@@ -1,7 +1,7 @@
 package com.mivan.streamingsandbox
 
+import android.annotation.SuppressLint
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,11 +10,9 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,8 +22,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +33,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Tv
@@ -77,9 +75,11 @@ import coil.compose.AsyncImage
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
+import com.mivan.streamingsandbox.feature.player.presentation.BottomControlsUiModel
 import com.mivan.streamingsandbox.feature.player.presentation.PlaybackUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerViewModel
+import com.mivan.streamingsandbox.feature.player.presentation.toBottomControlsUiModel
 import com.mivan.streamingsandbox.ui.theme.StreamingSandboxTheme
 import com.mivan.streamingsandbox.ui.utils.getImageBgColorFromUrl
 import dagger.hilt.android.AndroidEntryPoint
@@ -90,11 +90,11 @@ import java.util.Locale
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    private val TAG = "*|MainActivity"
     private val vm: PlayerViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         enableEdgeToEdge()
 
         setContent {
@@ -103,11 +103,14 @@ class MainActivity : ComponentActivity() {
                 PlayerScreen(
                     uiState = uiState,
                     onAttachPlayerView = vm::attachPlayerView,
+                    onDetachPlayerView = vm::detachPlayerView,
                     openChannelSelector = vm::openChannelSelector,
                     onSelectChannel = vm::selectChannel,
                     onRetry = vm::retryCurrentChannel,
                     onProgramRefresh = vm::refreshEpg,
                     onTogglePlayPause = vm::togglePlayPause,
+                    onSeekBack = vm::seekBack,
+                    onSeekForward = vm::seekForward,
                     onGoToLive = vm::goToLive
                 )
             }
@@ -132,11 +135,14 @@ class MainActivity : ComponentActivity() {
     private fun PlayerScreen(
         uiState: PlayerUiState,
         onAttachPlayerView: (View) -> Unit,
+        onDetachPlayerView: (View) -> Unit,
         openChannelSelector: (open: Boolean) -> Unit,
         onSelectChannel: (Channel) -> Unit,
         onRetry: () -> Unit,
         onProgramRefresh: (force: Boolean?) -> Unit,
         onTogglePlayPause: () -> Unit,
+        onSeekBack: () -> Unit,
+        onSeekForward: () -> Unit,
         onGoToLive: () -> Unit
     ) {
         var isPlayerControlsVisible by remember { mutableStateOf(false) }
@@ -144,6 +150,9 @@ class MainActivity : ComponentActivity() {
             initialValue = DrawerValue.Closed
         )
         val scope = rememberCoroutineScope()
+        val controlsModel = uiState.toBottomControlsUiModel(::formatDuration)
+        val showBottomBarWhileTuning =
+            uiState.selectedChannel != null && uiState.isTuningChannel
 
         Scaffold { innerPadding ->
             ModalNavigationDrawer(
@@ -166,6 +175,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     VideoPlayerLayer(
                         onAttachPlayerView = onAttachPlayerView,
+                        onDetachPlayerView = onDetachPlayerView,
                         onControllerVisibilityChanged = { visible ->
                             isPlayerControlsVisible = visible
                         }
@@ -210,33 +220,45 @@ class MainActivity : ComponentActivity() {
                         logoUrl = uiState.selectedChannel?.urlLogo
                     )
 
-                    BottomControlsOverlay(
-                        visible = isPlayerControlsVisible,
-                        progressPercent = uiState.currentProgramProgressPercent,
-                        elapsedMs = uiState.currentProgramElapsedMs,
-                        totalMs = uiState.currentProgramTotalMs,
-                        showPauseIcon = uiState.playbackState == PlaybackUiState.Playing ||
-                                uiState.playbackState == PlaybackUiState.Buffering,
-                        playPauseEnabled = uiState.selectedChannel != null,
-                        onPlayPauseClick = onTogglePlayPause,
-                        goToLiveEnabled = uiState.selectedChannel != null,
-                        onGoToLiveClick = onGoToLive,
-                        isProgramLoading = uiState.isProgramsLoading,
-                        modifier = Modifier.align(Alignment.BottomCenter)
-                    )
-
                     NoChannelSelectedOverlay(
                         modifier = Modifier.align(Alignment.Center),
                         visible = !uiState.isChannelSelectorOpen && uiState.selectedChannel == null
+                    )
+
+                    BottomControlsOverlay(
+                        visible = isPlayerControlsVisible || showBottomBarWhileTuning,
+                        model = controlsModel,
+                        onPlayPauseClick = onTogglePlayPause,
+                        onSeekBackClick = onSeekBack,
+                        onSeekForwardClick = onSeekForward,
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
+
+                    LiveBadgeOverlay(
+                        visible = uiState.selectedChannel != null &&
+                            !uiState.isTuningChannel &&
+                            uiState.playbackState != PlaybackUiState.Buffering,
+                        liveButtonEnabled = controlsModel.liveButtonEnabled,
+                        liveBadgeText = controlsModel.liveBadgeText,
+                        liveBadgeColor = controlsModel.progressColor,
+                        onGoToLiveClick = onGoToLive,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = 12.dp,
+                                bottom = if (isPlayerControlsVisible) 88.dp else 12.dp
+                            )
                     )
                 }
             }
         }
     }
 
+    @SuppressLint("InflateParams")
     @Composable
     private fun VideoPlayerLayer(
         onAttachPlayerView: (View) -> Unit,
+        onDetachPlayerView: (View) -> Unit,
         onControllerVisibilityChanged: (Boolean) -> Unit
     ) {
         val controllerVisibilityListener = PlayerView.ControllerVisibilityListener {
@@ -254,6 +276,9 @@ class MainActivity : ComponentActivity() {
             },
             update = { view ->
                 onAttachPlayerView(view)
+            },
+            onRelease = { view ->
+                onDetachPlayerView(view)
             }
         )
     }
@@ -349,7 +374,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Text(
-                        text = "Sintonizando canal...",
+                        text = "Almacenando Búfer...",
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -361,15 +386,10 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun BottomControlsOverlay(
         visible: Boolean,
-        progressPercent: Int?,
-        elapsedMs: Long?,
-        totalMs: Long?,
-        showPauseIcon: Boolean,
-        playPauseEnabled: Boolean,
+        model: BottomControlsUiModel,
         onPlayPauseClick: () -> Unit,
-        goToLiveEnabled: Boolean,
-        onGoToLiveClick: () -> Unit,
-        isProgramLoading: Boolean,
+        onSeekBackClick: () -> Unit,
+        onSeekForwardClick: () -> Unit,
         modifier: Modifier = Modifier
     ) {
         AnimatedVisibility(
@@ -378,8 +398,6 @@ class MainActivity : ComponentActivity() {
             enter = fadeIn(),
             exit = fadeOut()
         ) {
-            val progress = ((progressPercent ?: 0).coerceIn(0, 100)) / 100f
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -390,14 +408,31 @@ class MainActivity : ComponentActivity() {
             ) {
                 IconButton(
                     onClick = onPlayPauseClick,
-                    enabled = playPauseEnabled,
+                    enabled = model.controlsEnabled,
                     modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
-                        imageVector = if (showPauseIcon) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (showPauseIcon) "Pausar" else "Reproducir",
-                        tint = if (playPauseEnabled) Color.White else Color.Gray,
+                        imageVector = if (model.showPlayPauseAsPause) {
+                            Icons.Filled.Pause
+                        } else {
+                            Icons.Filled.PlayArrow
+                        },
+                        contentDescription = if (model.showPlayPauseAsPause) "Pausar" else "Reproducir",
+                        tint = if (model.controlsEnabled) Color.White else Color.Gray,
                         modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onSeekBackClick,
+                    enabled = model.controlsEnabled && model.canSeekDvr,
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.FastRewind,
+                        contentDescription = "Retroceder 10 segundos",
+                        tint = if (model.controlsEnabled && model.canSeekDvr) Color.White else Color.Gray,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
@@ -406,7 +441,7 @@ class MainActivity : ComponentActivity() {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (isProgramLoading) {
+                    if (model.showProgramLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
                             strokeWidth = 2.dp,
@@ -414,43 +449,74 @@ class MainActivity : ComponentActivity() {
                         )
                     } else {
                         Text(
-                            text = "${formatDuration(elapsedMs)} / ${formatDuration(totalMs)}",
+                            text = model.timeLabel,
                             color = Color.White,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+
                     LinearProgressIndicator(
-                        progress = { progress },
+                        progress = { model.progressValue },
+                        color = model.progressColor,
+                        trackColor = Color.Gray,
                         modifier = Modifier.weight(1f)
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.15f))
-                        .clickable(enabled = goToLiveEnabled) {
-                            onGoToLiveClick()
-                        }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center
+                IconButton(
+                    onClick = onSeekForwardClick,
+                    enabled = model.controlsEnabled && model.canSeekDvr,
+                    modifier = Modifier.size(42.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (goToLiveEnabled) Color.Red else Color.Black)
-                        )
-                        Text(
-                            text = "LIVE",
-                            color = if (goToLiveEnabled) Color.White else Color.Black,
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Filled.FastForward,
+                        contentDescription = "Adelantar 10 segundos",
+                        tint = if (model.controlsEnabled && model.canSeekDvr) Color.White else Color.Gray,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun LiveBadgeOverlay(
+        visible: Boolean,
+        liveButtonEnabled: Boolean,
+        liveBadgeText: String,
+        liveBadgeColor: Color,
+        onGoToLiveClick: () -> Unit,
+        modifier: Modifier = Modifier
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            modifier = modifier,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .clickable(enabled = liveButtonEnabled) { onGoToLiveClick() }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (liveButtonEnabled) liveBadgeColor else Color.DarkGray)
+                    )
+                    Text(
+                        text = liveBadgeText,
+                        color = if (liveButtonEnabled) Color.White else Color.Gray,
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
         }

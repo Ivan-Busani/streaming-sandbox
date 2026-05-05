@@ -1,6 +1,6 @@
 # StreamingSandbox — handoff para retomar
 
-**Fecha de referencia:** 2026-04-24
+**Fecha de referencia:** 2026-05-05
 
 ## Objetivo general
 
@@ -34,6 +34,7 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 - ☑ Precarga de EPG al abrir app + filtrado local por canal (sin esperar descarga al cambiar canal)
 - ☑ Selector de canales overlay (carrusel + cierre por tap fuera + selección directa)
 - ☑ Overlays de reproducción custom (play/pause + acción LIVE + indicador de carga de canal/programación)
+- ☑ Controles neutros durante sintonía y durante buffering (sin LIVE hasta estar estable); badge LIVE oculto si `Buffering`
 - ☐ Afinar cobertura EPG vs lista M3U (IDs distintos entre fuentes → % match bajo; curated M3U o mejor matching p. ej. `<channel>` XMLTV)
 - ☐ Timeshift (pausa en vivo) y Catchup (grabaciones)
 
@@ -57,7 +58,7 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
   - `data/ExoPlayerEngine.kt`
   - `data/DefaultPlayerEngineFactory.kt`, `DefaultPlayerVendorProvider.kt`
   - `data/BitmovinPlayerEngine.kt`, `CastlabsPlayerEngine.kt` (stubs o fallback)
-  - `presentation/PlayerViewModel.kt`, `PlayerUiState.kt` (`PlaybackUiState`)
+  - `presentation/PlayerViewModel.kt`, `PlayerUiState.kt` (`PlaybackUiState`), `PlayerUiMappers.kt` (`toBottomControlsUiModel`)
 - `com.mivan.streamingsandbox.di.*`
   - `RepositoryModule.kt`
   - `PlayerFactoryModule.kt` (Binds de factory + vendor provider) ✅
@@ -65,6 +66,12 @@ Casilla **☐** = pendiente, **☑** = hecho (cámbialo en el texto al cerrar un
 - `ui/theme/*`
 
 ## Player / arquitectura
+
+### Tuning vs buffering en UI
+
+- **`isTuningChannel`**: se activa al cambiar o reintentar canal; `updateState()` no lee offsets ni EPG del motor mientras es true (evita datos del canal anterior).
+- **Fin de tuning**: no basta con `Ready`/`Playing`/`Ended` del motor: tras `prepare()` puede llegar un `Playing`/`Ready` residual del stream anterior. Solo se limpia `isTuningChannel` cuando ya hubo **`Idle` o `Buffering`** en esa sintonía (`sawIdleOrBufferingSinceTuneStarted` en `PlayerViewModel`). Los errores siguen cerrando el tuning al momento.
+- **Controles inferiores**: `PlayerUiMappers.toBottomControlsUiModel` trata como neutro (`--:--`, barra gris, sin texto LIVE en badge) si no hay canal, si **`isTuningChannel`**, o si **`playbackState == Buffering`** (rebuferizado en vivo sin tuning). El overlay **`LiveBadgeOverlay`** en `MainActivity` se oculta durante tuning **y** durante `Buffering`.
 
 - `PlayerViewModel`: `GetChannelsUseCase` + motor vía `PlayerEngineFactory` + `PlayerVendorProvider` (según implementación final).
 - UI: `ModalNavigationDrawer`, `PlayerView` en `AndroidView`, overlay de título ligado a visibilidad de controles del reproductor.
@@ -93,7 +100,8 @@ Estado actual:
 - ☑ EPG persistida por día en almacenamiento local; al reiniciar en el mismo día reutiliza cache sin refetch completo.
 - ☑ Flujo de canal optimizado: reproduce al seleccionar y carga/programa en segundo plano con refresh periódico de EPG.
 - ☑ UI de overlays extendida: loading central, timeline con programa en vivo, selector de canales tipo carrusel.
-- ☐ Estabilidad al minimizar/restaurar: mitigaciones aplicadas en `ExoPlayerEngine` (`ensurePlayer` + `runOnMain`), validar que no reaparezca `Handler on a dead thread`.
+- ☑ Estabilidad al minimizar/restaurar: mitigaciones validadas en `ExoPlayerEngine` (detach/attach de `PlayerView`, `release` defensivo, guardas en callbacks). No se reprodujo `Handler on a dead thread` en smoke test de lifecycle.
+- ☑ UI LIVE vs tuning/buffering: fin de tuning robusto ante estados obsoletos del motor; barras inferiores y badge coherentes con buffering intermedio y rebuferizado.
 - ☐ Afinar match EPG↔canales, Timeshift/Catchup, Cast y multi-DRM siguen pendientes.
 
 ## Vendors (Bitmovin / Castlabs)

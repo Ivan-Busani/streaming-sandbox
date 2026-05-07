@@ -7,8 +7,11 @@ import com.mivan.streamingsandbox.feature.vod.domain.model.VodItem
 
 data class PlayerUiState(
     val isMediaSelectorOpen: Boolean = false,
+    val isFavoritesSelectorOpen: Boolean = false,
     val channels: List<Channel> = emptyList(),
     val vodItems: List<VodItem> = emptyList(),
+    val favoriteChannelIds: Set<String> = emptySet(),
+    val favoriteVodIds: Set<String> = emptySet(),
     val selectedChannel: Channel? = null,
     val selectedVodItem: VodItem? = null,
     val playbackState: PlaybackUiState = PlaybackUiState.Idle,
@@ -40,20 +43,6 @@ sealed interface PlayableMedia {
     data class Live(val channel: Channel) : PlayableMedia
     data class Vod(val item: VodItem) : PlayableMedia
 }
-
-fun PlayableMedia.toPlayableChannel(): Channel = when (this) {
-    is PlayableMedia.Live -> channel
-    is PlayableMedia.Vod -> item.toPlayableChannel()
-}
-
-private fun VodItem.toPlayableChannel(): Channel = Channel(
-    id = id,
-    name = name,
-    type = type,
-    url = url,
-    urlLogo = urlPortrait,
-    drm = drm
-)
 
 sealed class PlaybackUiState {
     data object Idle : PlaybackUiState()

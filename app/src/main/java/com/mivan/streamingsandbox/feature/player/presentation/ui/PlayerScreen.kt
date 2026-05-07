@@ -3,6 +3,7 @@ package com.mivan.streamingsandbox.feature.player.presentation.ui
 import android.annotation.SuppressLint
 import android.content.res.Configuration
 import android.view.View
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
@@ -31,7 +33,6 @@ import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.player.presentation.PlayableMedia
 import com.mivan.streamingsandbox.feature.player.presentation.PlaybackUiState
 import com.mivan.streamingsandbox.feature.player.presentation.PlayerUiState
-import com.mivan.streamingsandbox.feature.player.presentation.toPlayableChannel
 import com.mivan.streamingsandbox.feature.player.presentation.toBottomControlsUiModel
 import com.mivan.streamingsandbox.feature.vod.domain.model.VodItem
 import kotlinx.coroutines.launch
@@ -42,8 +43,11 @@ fun PlayerScreen(
     onAttachPlayerView: (View) -> Unit,
     onDetachPlayerView: (View) -> Unit,
     openMediaSelector: (open: Boolean) -> Unit,
+    openFavoritesSelector: (open: Boolean) -> Unit,
     onSelectChannel: (Channel) -> Unit,
     onSelectVod: (VodItem) -> Unit,
+    onToggleChannelFavorite: (Channel) -> Unit,
+    onToggleVodFavorite: (VodItem) -> Unit,
     onRetry: () -> Unit,
     onProgramRefresh: (force: Boolean?) -> Unit,
     onTogglePlayPause: () -> Unit,
@@ -57,10 +61,13 @@ fun PlayerScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val controlsModel = uiState.toBottomControlsUiModel(::formatDuration)
-    val selectedPlayableChannel = uiState.selectedPlayableMedia?.toPlayableChannel()
-    val showBottomBarWhileTuning = selectedPlayableChannel != null && uiState.isTuningMedia
+    val favoriteChannels = uiState.channels.filter { it.id in uiState.favoriteChannelIds }
+    val favoriteVodItems = uiState.vodItems.filter { it.id in uiState.favoriteVodIds }
+    val isAnySelectorOpen = uiState.isMediaSelectorOpen || uiState.isFavoritesSelectorOpen
+    val showBottomBarWhileTuning = uiState.selectedPlayableMedia != null && uiState.isTuningMedia
     val shouldShowBottomControls =
-        !uiState.isMediaSelectorOpen &&
+        uiState.selectedPlayableMedia != null &&
+            !isAnySelectorOpen &&
             (isPlayerControlsVisible || showBottomBarWhileTuning || isSeekOverlayLocked)
     val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     val cutoutTopPadding = if (isPortrait) {
@@ -68,11 +75,24 @@ fun PlayerScreen(
     } else {
         0.dp
     }
+    BackHandler {
+        when {
+            uiState.isMediaSelectorOpen -> openMediaSelector(false)
+            uiState.isFavoritesSelectorOpen -> openFavoritesSelector(false)
+            drawerState.isOpen -> scope.launch { drawerState.close() }
+            else -> Unit
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = uiState.selectedPlayableMedia != null,
         drawerContent = {
-            ModalDrawerSheet(modifier = Modifier.width(320.dp)) {
+            ModalDrawerSheet(
+                modifier = Modifier
+                    .width(320.dp),
+                drawerContainerColor = Color(0xFF555555)
+            ) {
                 SidebarDrawerContent(
                     uiState = uiState,
                     onRetry = onRetry,
@@ -90,50 +110,81 @@ fun PlayerScreen(
                 }
             )
 
-                MediaSelectorOverlay(
-                    visible = uiState.isMediaSelectorOpen,
-                    channels = uiState.channels,
-                    vodItems = uiState.vodItems,
-                    selectedMedia = selectedPlayableChannel,
-                    onSelectChannel = { channel ->
-                        onSelectChannel(channel)
-                        openMediaSelector(false)
-                    },
-                    onSelectVod = { vodItem ->
-                        onSelectVod(vodItem)
-                        openMediaSelector(false)
-                    },
-                    onTapOut = {
-                        openMediaSelector(false)
-                    }
-                )
+            MediaSelectorOverlay(
+                visible = uiState.isMediaSelectorOpen,
+                channels = uiState.channels,
+                vodItems = uiState.vodItems,
+                selectedMedia = uiState.selectedPlayableMedia,
+                favoriteChannelIds = uiState.favoriteChannelIds,
+                favoriteVodIds = uiState.favoriteVodIds,
+                onSelectChannel = { channel ->
+                    onSelectChannel(channel)
+                    openMediaSelector(false)
+                },
+                onSelectVod = { vodItem ->
+                    onSelectVod(vodItem)
+                    openMediaSelector(false)
+                },
+                onToggleChannelFavorite = onToggleChannelFavorite,
+                onToggleVodFavorite = onToggleVodFavorite,
+                onTapOut = {
+                    openMediaSelector(false)
+                }
+            )
 
-                MediaTitleOverlay(
-                    selectedMedia = selectedPlayableChannel,
-                    visible = isPlayerControlsVisible && !uiState.isMediaSelectorOpen,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = cutoutTopPadding),
-                    onInfoClick = {
-                        scope.launch {
-                            if (drawerState.currentValue == DrawerValue.Open) {
-                                drawerState.close()
-                            } else {
-                                drawerState.open()
-                            }
+            MediaSelectorOverlay(
+                visible = uiState.isFavoritesSelectorOpen,
+                channels = favoriteChannels,
+                vodItems = favoriteVodItems,
+                selectedMedia = uiState.selectedPlayableMedia,
+                favoriteChannelIds = uiState.favoriteChannelIds,
+                favoriteVodIds = uiState.favoriteVodIds,
+                onSelectChannel = { channel ->
+                    onSelectChannel(channel)
+                    openFavoritesSelector(false)
+                },
+                onSelectVod = { vodItem ->
+                    onSelectVod(vodItem)
+                    openFavoritesSelector(false)
+                },
+                onToggleChannelFavorite = onToggleChannelFavorite,
+                onToggleVodFavorite = onToggleVodFavorite,
+                onTapOut = {
+                    openFavoritesSelector(false)
+                }
+            )
+
+            MediaTitleOverlay(
+                selectedMedia = uiState.selectedPlayableMedia,
+                visible = !isAnySelectorOpen &&
+                    (isPlayerControlsVisible || uiState.selectedPlayableMedia == null),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = cutoutTopPadding),
+                onInfoClick = {
+                    scope.launch {
+                        if (drawerState.currentValue == DrawerValue.Open) {
+                            drawerState.close()
+                        } else {
+                            drawerState.open()
                         }
-                    },
-                    onChannelsMenuClick = {
-                        openMediaSelector(true)
                     }
-                )
+                },
+                onFavoritesMenuClick = {
+                    openFavoritesSelector(true)
+                },
+                onChannelsMenuClick = {
+                    openMediaSelector(true)
+                }
+            )
 
                 MediaLoadingOverlay(
                     modifier = Modifier.align(Alignment.Center),
-                    visible = selectedPlayableChannel != null &&
+                    visible = uiState.selectedPlayableMedia != null &&
+                    !isAnySelectorOpen &&
                         uiState.playbackState == PlaybackUiState.Buffering,
                     channelLogoUrl = if (uiState.selectedPlayableMedia is PlayableMedia.Live) {
-                        selectedPlayableChannel?.urlLogo
+                        uiState.selectedChannel?.urlLogo
                     } else {
                         null
                     }
@@ -141,7 +192,7 @@ fun PlayerScreen(
 
                 NoMediaSelectedOverlay(
                     modifier = Modifier.align(Alignment.Center),
-                    visible = !uiState.isMediaSelectorOpen && selectedPlayableChannel == null
+                    visible = !isAnySelectorOpen && uiState.selectedPlayableMedia == null
                 )
 
                 BottomControlsOverlay(
@@ -156,8 +207,8 @@ fun PlayerScreen(
                 )
 
             LiveBadgeOverlay(
-                visible = selectedPlayableChannel != null &&
-                    !uiState.isMediaSelectorOpen &&
+                visible = uiState.selectedPlayableMedia != null &&
+                    !isAnySelectorOpen &&
                     uiState.selectedPlayableMedia is PlayableMedia.Live &&
                     !uiState.isTuningMedia &&
                     uiState.playbackState != PlaybackUiState.Buffering,

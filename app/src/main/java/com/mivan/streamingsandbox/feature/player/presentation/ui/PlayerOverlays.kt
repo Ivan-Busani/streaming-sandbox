@@ -34,9 +34,10 @@ import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.player.presentation.BottomControlsUiModel
+import com.mivan.streamingsandbox.feature.player.presentation.PlayableMedia
 import com.mivan.streamingsandbox.ui.utils.getImageBgColorFromUrl
 import com.mivan.streamingsandbox.feature.vod.domain.model.VodItem
 import kotlin.math.roundToInt
@@ -81,10 +83,11 @@ private enum class SelectorSection {
 
 @Composable
 fun MediaTitleOverlay(
-    selectedMedia: Channel?,
+    selectedMedia: PlayableMedia?,
     visible: Boolean,
     modifier: Modifier = Modifier,
     onInfoClick: () -> Unit,
+    onFavoritesMenuClick: () -> Unit,
     onChannelsMenuClick: () -> Unit
 ) {
     AnimatedVisibility(visible = visible, modifier = modifier, enter = fadeIn(), exit = fadeOut()) {
@@ -105,11 +108,18 @@ fun MediaTitleOverlay(
                 }
             }
             Text(
-                text = selectedMedia?.name ?: "",
+                text = selectedMedia.title(),
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f)
             )
+            IconButton(onClick = onFavoritesMenuClick) {
+                Icon(
+                    imageVector = Icons.Outlined.FavoriteBorder,
+                    contentDescription = "Abrir selector de favoritos",
+                    tint = Color.White
+                )
+            }
             IconButton(onClick = onChannelsMenuClick) {
                 Icon(
                     imageVector = Icons.Outlined.Menu,
@@ -425,15 +435,19 @@ fun MediaSelectorOverlay(
     visible: Boolean,
     channels: List<Channel>,
     vodItems: List<VodItem>,
-    selectedMedia: Channel?,
+    selectedMedia: PlayableMedia?,
+    favoriteChannelIds: Set<String> = emptySet(),
+    favoriteVodIds: Set<String> = emptySet(),
     onSelectChannel: (Channel) -> Unit,
     onSelectVod: (VodItem) -> Unit,
+    onToggleChannelFavorite: (Channel) -> Unit = {},
+    onToggleVodFavorite: (VodItem) -> Unit = {},
     onTapOut: (() -> Unit)? = null
 ) {
     val hasLiveItems = channels.isNotEmpty()
     val hasVodItems = vodItems.isNotEmpty()
-    val selectedId = selectedMedia?.id
-    val selectedIsVod = selectedId != null && vodItems.any { it.id == selectedId }
+    val selectedId = selectedMedia.id()
+    val selectedIsVod = selectedMedia is PlayableMedia.Vod
     val initialSection = when {
         selectedIsVod && hasVodItems -> SelectorSection.VOD
         hasLiveItems -> SelectorSection.LIVE
@@ -469,8 +483,8 @@ fun MediaSelectorOverlay(
                     .fillMaxHeight(
                         if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT) 0.90f else 0.86f
                     )
-                    .background(Color.Black.copy(alpha = 0.80f))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .background(Color(0xFF222222).copy(0.9f))
+                    .padding(horizontal = 15.dp, vertical = 15.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
@@ -480,18 +494,16 @@ fun MediaSelectorOverlay(
                         .padding(top = 8.dp, bottom = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (hasLiveItems && hasVodItems) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            AnimatedSelectorTabs(
-                                activeSection = activeSection,
-                                onSelectSection = { activeSection = it }
-                            )
-                        }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AnimatedSelectorTabs(
+                            activeSection = activeSection,
+                            onSelectSection = { activeSection = it }
+                        )
                     }
 
                     when (activeSection) {
@@ -499,36 +511,50 @@ fun MediaSelectorOverlay(
                             ChannelSectionCarousel(
                                 modifier = Modifier.weight(1f),
                                 channels = channels,
-                                selectedChannel = selectedMedia,
-                                onSelectChannel = onSelectChannel
+                                selectedMediaId = selectedId,
+                                favoriteChannelIds = favoriteChannelIds,
+                                onSelectChannel = onSelectChannel,
+                                onToggleFavorite = onToggleChannelFavorite
                             )
-                        } else if (hasVodItems) {
-                            VodSectionCarousel(
-                                modifier = Modifier.weight(1f),
-                                vodItems = vodItems,
-                                selectedChannel = selectedMedia,
-                                onSelectVod = onSelectVod
+                        } else {
+                            EmptySelectorState(
+                                modifier = Modifier.weight(1f)
                             )
                         }
                         SelectorSection.VOD -> if (hasVodItems) {
                             VodSectionCarousel(
                                 modifier = Modifier.weight(1f),
                                 vodItems = vodItems,
-                                selectedChannel = selectedMedia,
-                                onSelectVod = onSelectVod
+                                selectedMediaId = selectedId,
+                                favoriteVodIds = favoriteVodIds,
+                                onSelectVod = onSelectVod,
+                                onToggleFavorite = onToggleVodFavorite
                             )
-                        } else if (hasLiveItems) {
-                            ChannelSectionCarousel(
-                                modifier = Modifier.weight(1f),
-                                channels = channels,
-                                selectedChannel = selectedMedia,
-                                onSelectChannel = onSelectChannel
+                        } else {
+                            EmptySelectorState(
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EmptySelectorState(
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "Lista vacia",
+            color = Color.White.copy(alpha = 0.8f),
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 
@@ -612,16 +638,18 @@ private fun SelectorTabButton(
 private fun ChannelSectionCarousel(
     modifier: Modifier = Modifier,
     channels: List<Channel>,
-    selectedChannel: Channel?,
-    onSelectChannel: (Channel) -> Unit
+    selectedMediaId: String?,
+    favoriteChannelIds: Set<String>,
+    onSelectChannel: (Channel) -> Unit,
+    onToggleFavorite: (Channel) -> Unit
 ) {
     val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
 
     if (isPortrait) {
-        val selectedIndex = channels.indexOfFirst { it.id == selectedChannel?.id }
+        val selectedIndex = channels.indexOfFirst { it.id == selectedMediaId }
             .takeIf { it >= 0 } ?: 0
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
-        LaunchedEffect(selectedChannel?.id, channels.size) {
+        LaunchedEffect(selectedMediaId, channels.size) {
             if (channels.isNotEmpty()) {
                 listState.scrollToItem(selectedIndex)
             }
@@ -634,7 +662,8 @@ private fun ChannelSectionCarousel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(channels, key = { it.id }) { channel ->
-                val isSelected = channel.id == selectedChannel?.id
+                val isSelected = channel.id == selectedMediaId
+                val isFavorite = channel.id in favoriteChannelIds
                 val context = LocalContext.current
                 val fallback = MaterialTheme.colorScheme.surfaceVariant
                 var bgColor by remember(channel.urlLogo) { mutableStateOf(fallback) }
@@ -681,13 +710,25 @@ private fun ChannelSectionCarousel(
                         text = channel.name,
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f)
                     )
+                    IconButton(onClick = { onToggleFavorite(channel) }) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                            contentDescription = if (isFavorite) {
+                                "Quitar de favoritos"
+                            } else {
+                                "Agregar a favoritos"
+                            },
+                            tint = if (isFavorite) Color.Red else Color.White
+                        )
+                    }
                 }
             }
         }
     } else {
-        val initialIndex = channels.indexOfFirst { it.id == selectedChannel?.id }
+        val initialIndex = channels.indexOfFirst { it.id == selectedMediaId }
             .takeIf { it >= 0 } ?: 0
         val carouselState = rememberCarouselState(
             initialItem = initialIndex,
@@ -705,7 +746,8 @@ private fun ChannelSectionCarousel(
             contentPadding = PaddingValues(horizontal = 16.dp)
         ) { i ->
             val channel = channels[i]
-            val isSelected = channel.id == selectedChannel?.id
+            val isSelected = channel.id == selectedMediaId
+            val isFavorite = channel.id in favoriteChannelIds
             val context = LocalContext.current
             val fallback = MaterialTheme.colorScheme.surfaceVariant
             var bgColor by remember(channel.urlLogo) { mutableStateOf(fallback) }
@@ -751,6 +793,17 @@ private fun ChannelSectionCarousel(
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1
                 )
+                IconButton(onClick = { onToggleFavorite(channel) }) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = if (isFavorite) {
+                            "Quitar de favoritos"
+                        } else {
+                            "Agregar a favoritos"
+                        },
+                        tint = if (isFavorite) Color.Red else Color.White
+                    )
+                }
             }
         }
     }
@@ -761,16 +814,18 @@ private fun ChannelSectionCarousel(
 private fun VodSectionCarousel(
     modifier: Modifier = Modifier,
     vodItems: List<VodItem>,
-    selectedChannel: Channel?,
-    onSelectVod: (VodItem) -> Unit
+    selectedMediaId: String?,
+    favoriteVodIds: Set<String>,
+    onSelectVod: (VodItem) -> Unit,
+    onToggleFavorite: (VodItem) -> Unit
 ) {
     val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
 
     if (isPortrait) {
-        val selectedIndex = vodItems.indexOfFirst { it.id == selectedChannel?.id }
+        val selectedIndex = vodItems.indexOfFirst { it.id == selectedMediaId }
             .takeIf { it >= 0 } ?: 0
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
-        LaunchedEffect(selectedChannel?.id, vodItems.size) {
+        LaunchedEffect(selectedMediaId, vodItems.size) {
             if (vodItems.isNotEmpty()) {
                 listState.scrollToItem(selectedIndex)
             }
@@ -783,7 +838,8 @@ private fun VodSectionCarousel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(vodItems, key = { it.id }) { vodItem ->
-                val isSelected = vodItem.id == selectedChannel?.id
+                val isSelected = vodItem.id == selectedMediaId
+                val isFavorite = vodItem.id in favoriteVodIds
                 val context = LocalContext.current
                 val fallback = MaterialTheme.colorScheme.surfaceVariant
                 var bgColor by remember(vodItem.urlPortrait) { mutableStateOf(fallback) }
@@ -830,13 +886,25 @@ private fun VodSectionCarousel(
                         text = vodItem.name,
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f)
                     )
+                    IconButton(onClick = { onToggleFavorite(vodItem) }) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                            contentDescription = if (isFavorite) {
+                                "Quitar de favoritos"
+                            } else {
+                                "Agregar a favoritos"
+                            },
+                            tint = if (isFavorite) Color.Red else Color.White
+                        )
+                    }
                 }
             }
         }
     } else {
-        val initialIndex = vodItems.indexOfFirst { it.id == selectedChannel?.id }
+        val initialIndex = vodItems.indexOfFirst { it.id == selectedMediaId }
             .takeIf { it >= 0 } ?: 0
         val carouselState = rememberCarouselState(
             initialItem = initialIndex,
@@ -854,7 +922,8 @@ private fun VodSectionCarousel(
             contentPadding = PaddingValues(horizontal = 16.dp)
         ) { i ->
             val vodItem = vodItems[i]
-            val isSelected = vodItem.id == selectedChannel?.id
+            val isSelected = vodItem.id == selectedMediaId
+            val isFavorite = vodItem.id in favoriteVodIds
             val context = LocalContext.current
             val fallback = MaterialTheme.colorScheme.surfaceVariant
             var bgColor by remember(vodItem.urlPortrait) { mutableStateOf(fallback) }
@@ -900,6 +969,17 @@ private fun VodSectionCarousel(
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1
                 )
+                IconButton(onClick = { onToggleFavorite(vodItem) }) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = if (isFavorite) {
+                            "Quitar de favoritos"
+                        } else {
+                            "Agregar a favoritos"
+                        },
+                        tint = if (isFavorite) Color.Red else Color.White
+                    )
+                }
             }
         }
     }
@@ -920,4 +1000,16 @@ fun NoMediaSelectedOverlay(modifier: Modifier = Modifier, visible: Boolean) {
             )
         }
     }
+}
+
+private fun PlayableMedia?.id(): String? = when (this) {
+    is PlayableMedia.Live -> channel.id
+    is PlayableMedia.Vod -> item.id
+    null -> null
+}
+
+private fun PlayableMedia?.title(): String = when (this) {
+    is PlayableMedia.Live -> channel.name
+    is PlayableMedia.Vod -> item.name
+    null -> ""
 }

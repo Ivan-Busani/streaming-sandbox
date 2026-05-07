@@ -1,5 +1,6 @@
 package com.mivan.streamingsandbox.feature.player.presentation
 
+import android.content.Context
 import android.view.View
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.ViewModel
@@ -14,6 +15,7 @@ import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineFactory
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
 import com.mivan.streamingsandbox.feature.player.domain.PlayerVendorProvider
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,9 +26,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.coroutines.cancellation.CancellationException
+import androidx.core.content.edit
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
+    @ApplicationContext context: Context,
     getChannelsUseCase: GetChannelsUseCase,
     private val getEpgEntriesUseCase: GetEpgEntriesUseCase,
     getVodItemsUseCase: GetVodItemsUseCase,
@@ -34,8 +38,13 @@ class PlayerViewModel @Inject constructor(
     playerEngineFactory: PlayerEngineFactory,
     playerVendorProvider: PlayerVendorProvider
 ) : ViewModel() {
+    private val appContext = context.applicationContext
+
     private companion object {
         private const val TAG = "*|PlayerViewModel"
+        private const val PREFS_NAME = "player_favorites_prefs"
+        private const val KEY_FAVORITE_CHANNEL_IDS = "favorite_channel_ids"
+        private const val KEY_FAVORITE_VOD_IDS = "favorite_vod_ids"
         private const val LIVE_ENTER_BEHIND_MS = 15_000L
         private const val LIVE_EXIT_BEHIND_MS = 8_000L
         private const val GO_LIVE_GRACE_MS = 12_000L
@@ -64,6 +73,8 @@ class PlayerViewModel @Inject constructor(
             _uiState.value = PlayerUiState(
                 channels = channels,
                 vodItems = vodItems,
+                favoriteChannelIds = readFavoriteChannelIds(),
+                favoriteVodIds = readFavoriteVodIds(),
                 playbackState = PlaybackUiState.Idle
             )
         }
@@ -130,7 +141,41 @@ class PlayerViewModel @Inject constructor(
 
     fun openMediaSelector(open: Boolean = true) {
         _uiState.update { current ->
-            current.copy(isMediaSelectorOpen = open)
+            current.copy(
+                isMediaSelectorOpen = open,
+                isFavoritesSelectorOpen = if (open) false else current.isFavoritesSelectorOpen
+            )
+        }
+    }
+
+    fun openFavoritesSelector(open: Boolean = true) {
+        _uiState.update { current ->
+            current.copy(
+                isFavoritesSelectorOpen = open,
+                isMediaSelectorOpen = if (open) false else current.isMediaSelectorOpen
+            )
+        }
+    }
+
+    fun toggleChannelFavorite(channel: Channel) {
+        _uiState.update { current ->
+            val next = current.favoriteChannelIds.toMutableSet()
+            if (!next.add(channel.id)) {
+                next.remove(channel.id)
+            }
+            persistFavoriteChannelIds(next)
+            current.copy(favoriteChannelIds = next)
+        }
+    }
+
+    fun toggleVodFavorite(vodItem: VodItem) {
+        _uiState.update { current ->
+            val next = current.favoriteVodIds.toMutableSet()
+            if (!next.add(vodItem.id)) {
+                next.remove(vodItem.id)
+            }
+            persistFavoriteVodIds(next)
+            current.copy(favoriteVodIds = next)
         }
     }
 
@@ -439,6 +484,40 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         playerEngine.release()
         super.onCleared()
+    }
+
+    // Keep favorites across app restarts.
+    private fun persistFavoriteChannelIds(ids: Set<String>) {
+        appContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit {
+                putStringSet(KEY_FAVORITE_CHANNEL_IDS, ids)
+            }
+    }
+
+    // Keep favorites across app restarts.
+    private fun persistFavoriteVodIds(ids: Set<String>) {
+        appContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit {
+                putStringSet(KEY_FAVORITE_VOD_IDS, ids)
+            }
+    }
+
+    private fun readFavoriteChannelIds(): Set<String> {
+        val persisted = appContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(KEY_FAVORITE_CHANNEL_IDS, emptySet())
+            ?: emptySet()
+        return persisted.toSet()
+    }
+
+    private fun readFavoriteVodIds(): Set<String> {
+        val persisted = appContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(KEY_FAVORITE_VOD_IDS, emptySet())
+            ?: emptySet()
+        return persisted.toSet()
     }
 }
 

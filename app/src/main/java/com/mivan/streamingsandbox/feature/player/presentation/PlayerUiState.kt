@@ -3,11 +3,14 @@ package com.mivan.streamingsandbox.feature.player.presentation
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
+import com.mivan.streamingsandbox.feature.vod.domain.model.VodItem
 
 data class PlayerUiState(
-    val isChannelSelectorOpen: Boolean = false,
+    val isMediaSelectorOpen: Boolean = false,
     val channels: List<Channel> = emptyList(),
+    val vodItems: List<VodItem> = emptyList(),
     val selectedChannel: Channel? = null,
+    val selectedVodItem: VodItem? = null,
     val playbackState: PlaybackUiState = PlaybackUiState.Idle,
     val playbackPositionMs: Long? = null,
     val playbackDurationMs: Long? = null,
@@ -18,11 +21,38 @@ data class PlayerUiState(
     val currentProgramTotalMs: Long? = null,
     val liveOffsetMs: Long? = null,
     val isBehindLive: Boolean = false,
+    val isLiveStream: Boolean = false,
     var isProgramsLoading: Boolean = false,
     val canSeekLiveDvr: Boolean = false,
     /** True after channel change until first Ready/Playing/Error (initial tune). */
-    val isTuningChannel: Boolean = false,
+    val isTuningMedia: Boolean = false,
     val metrics: PlaybackMetrics = PlaybackMetrics()
+) {
+    val selectedPlayableMedia: PlayableMedia?
+        get() = when {
+            selectedChannel != null -> PlayableMedia.Live(selectedChannel)
+            selectedVodItem != null -> PlayableMedia.Vod(selectedVodItem)
+            else -> null
+        }
+}
+
+sealed interface PlayableMedia {
+    data class Live(val channel: Channel) : PlayableMedia
+    data class Vod(val item: VodItem) : PlayableMedia
+}
+
+fun PlayableMedia.toPlayableChannel(): Channel = when (this) {
+    is PlayableMedia.Live -> channel
+    is PlayableMedia.Vod -> item.toPlayableChannel()
+}
+
+private fun VodItem.toPlayableChannel(): Channel = Channel(
+    id = id,
+    name = name,
+    type = type,
+    url = url,
+    urlLogo = urlPortrait,
+    drm = drm
 )
 
 sealed class PlaybackUiState {

@@ -1,10 +1,10 @@
 package com.mivan.streamingsandbox.feature.player.data
 
 import android.view.View
-import com.mivan.streamingsandbox.feature.player.domain.DrmConfig
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngine
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
+import com.mivan.streamingsandbox.feature.player.presentation.PlayableMedia
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +30,7 @@ class CastlabsPlayerEngine @Inject constructor() : PlayerEngine {
         _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 
-    override fun prepare(channelId: String, url: String, playWhenReady: Boolean, seekToMs: Long, drm: DrmConfig?) {
+    override fun prepare(media: PlayableMedia, playWhenReady: Boolean, seekToMs: Long) {
         _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 
@@ -51,6 +51,10 @@ class CastlabsPlayerEngine @Inject constructor() : PlayerEngine {
     }
 
     override fun seekForward() {
+        _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
+    }
+
+    override fun seekTo(positionMs: Long) {
         _state.value = PlayerEngineState.Error("Vendor no integrado aun.")
     }
 

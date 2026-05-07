@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.ViewModel
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.channels.domain.model.EpgEntry
-import com.mivan.streamingsandbox.feature.channels.domain.repository.ChannelRepository
 import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetChannelsUseCase
+import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetEpgEntriesUseCase
 import com.mivan.streamingsandbox.feature.channels.domain.usecase.GetProgramsForChannelUseCase
+import com.mivan.streamingsandbox.feature.vod.domain.model.VodItem
+import com.mivan.streamingsandbox.feature.vod.domain.usecase.GetVodItemsUseCase
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineFactory
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
@@ -25,8 +27,9 @@ import kotlin.coroutines.cancellation.CancellationException
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
-    private val channelRepository: ChannelRepository,
     getChannelsUseCase: GetChannelsUseCase,
+    private val getEpgEntriesUseCase: GetEpgEntriesUseCase,
+    getVodItemsUseCase: GetVodItemsUseCase,
     private val getProgramsForChannelUseCase: GetProgramsForChannelUseCase,
     playerEngineFactory: PlayerEngineFactory,
     playerVendorProvider: PlayerVendorProvider
@@ -50,15 +53,17 @@ class PlayerViewModel @Inject constructor(
     private var refreshEpgJob: Job? = null
     private var lastLoggedMetrics: PlaybackMetrics? = null
 
-    /** Avoid clearing tuning on stale Playing/Ready from the previous channel after prepare(). */
+    /** Avoid clearing tuning on stale Playing/Ready from previous media after prepare(). */
     private var sawIdleOrBufferingSinceTuneStarted = false
 
     init {
-        // Load channels
+        // Load channels and video on demand
         viewModelScope.launch {
             val channels = getChannelsUseCase()
+            val vodItems = getVodItemsUseCase()
             _uiState.value = PlayerUiState(
                 channels = channels,
+                vodItems = vodItems,
                 playbackState = PlaybackUiState.Idle
             )
         }
@@ -70,14 +75,14 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             playerEngine.state.collect { engineState ->
                 val current = _uiState.value
-                if (current.isTuningChannel) {
+                if (current.isTuningMedia) {
                     when (engineState) {
                         PlayerEngineState.Idle,
                         PlayerEngineState.Buffering -> sawIdleOrBufferingSinceTuneStarted = true
                         else -> Unit
                     }
                 }
-                val tuningFinished = current.isTuningChannel && when (engineState) {
+                val tuningFinished = current.isTuningMedia && when (engineState) {
                     is PlayerEngineState.Error -> true
                     PlayerEngineState.Ready,
                     PlayerEngineState.Playing,
@@ -90,7 +95,7 @@ class PlayerViewModel @Inject constructor(
                 _uiState.update { cur ->
                     cur.copy(
                         playbackState = engineState.toUiState(),
-                        isTuningChannel = if (tuningFinished) false else cur.isTuningChannel
+                        isTuningMedia = if (tuningFinished) false else cur.isTuningMedia
                     )
                 }
             }
@@ -123,9 +128,9 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun openChannelSelector(open: Boolean = true) {
+    fun openMediaSelector(open: Boolean = true) {
         _uiState.update { current ->
-            current.copy(isChannelSelectorOpen = open)
+            current.copy(isMediaSelectorOpen = open)
         }
     }
 
@@ -137,7 +142,12 @@ class PlayerViewModel @Inject constructor(
         goLiveGraceStartedAtMs = 0L
         sawIdleOrBufferingSinceTuneStarted = false
         _uiState.update { state ->
-            state.copy(isBehindLive = false, isTuningChannel = true)
+            state.copy(
+                isBehindLive = false,
+                isTuningMedia = true,
+                selectedChannel = channel,
+                selectedVodItem = null
+            )
         }
 
         updateState(
@@ -145,7 +155,7 @@ class PlayerViewModel @Inject constructor(
             programs = emptyList()
         )
 
-        loadChannel(channel, 0L)
+        loadMedia(PlayableMedia.Live(channel), 0L)
 
         val epgSnapshot = allEpg.value
         if (epgSnapshot.isNotEmpty()) {
@@ -160,12 +170,37 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun retryCurrentChannel() {
-        val current = _uiState.value.selectedChannel ?: return
+    fun selectVod(vodItem: VodItem) {
+        val current = _uiState.value.selectedVodItem
+        if (current?.id == vodItem.id) return
+
+        goLiveGraceUntilMs = 0L
+        goLiveGraceStartedAtMs = 0L
         sawIdleOrBufferingSinceTuneStarted = false
-        _uiState.update { it.copy(isTuningChannel = true) }
-        loadChannel(
-            channel = current,
+
+        _uiState.update { state ->
+            state.copy(
+                isBehindLive = false,
+                isTuningMedia = true,
+                selectedChannel = null,
+                selectedVodItem = vodItem
+            )
+        }
+
+        updateState(
+            selectedVodItem = vodItem,
+            programs = emptyList()
+        )
+
+        loadMedia(PlayableMedia.Vod(vodItem), 0L)
+    }
+
+    fun retryCurrentMedia() {
+        val current = _uiState.value.selectedPlayableMedia ?: return
+        sawIdleOrBufferingSinceTuneStarted = false
+        _uiState.update { it.copy(isTuningMedia = true) }
+        loadMedia(
+            media = current,
             seekToMs = playerEngine.currentPositionMs()
         )
     }
@@ -175,7 +210,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun onHostStart() {
-        if (_uiState.value.selectedChannel != null) {
+        if (_uiState.value.selectedPlayableMedia != null) {
             playerEngine.play()
         }
     }
@@ -189,18 +224,40 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun togglePlayPause() {
-        val state = _uiState.value.playbackState
-        val active = state == PlaybackUiState.Playing || state == PlaybackUiState.Buffering
+        val playbackState = _uiState.value.playbackState
+        val active = playbackState == PlaybackUiState.Playing || playbackState == PlaybackUiState.Buffering
 
         if (active) {
             playerEngine.pause()
-        } else if (_uiState.value.selectedChannel != null) {
+        } else if (_uiState.value.selectedPlayableMedia != null) {
             playerEngine.play()
         }
     }
 
+    fun seekBack() {
+        val state = _uiState.value
+        if (state.selectedPlayableMedia == null) return
+        if (state.isLiveStream) return
+        playerEngine.seekBack()
+    }
+
+    fun seekForward() {
+        val state = _uiState.value
+        if (state.selectedPlayableMedia == null) return
+        if (state.isLiveStream) return
+        playerEngine.seekForward()
+    }
+
+    fun seekTo(positionMs: Long) {
+        val state = _uiState.value
+        if (state.selectedPlayableMedia == null) return
+        if (state.isLiveStream) return
+        playerEngine.seekTo(positionMs)
+    }
+
     fun goToLive() {
-        if (_uiState.value.selectedChannel == null) return
+        val state = _uiState.value
+        if (state.selectedPlayableMedia == null) return
         val now = System.currentTimeMillis()
         goLiveGraceStartedAtMs = now
         goLiveGraceUntilMs = now + GO_LIVE_GRACE_MS
@@ -208,22 +265,12 @@ class PlayerViewModel @Inject constructor(
         playerEngine.play()
     }
 
-    fun seekBack() {
-        if (_uiState.value.selectedChannel == null) return
-        playerEngine.seekBack()
-    }
-
-    fun seekForward() {
-        if (_uiState.value.selectedChannel == null) return
-        playerEngine.seekForward()
-    }
-
     fun refreshEpg(force: Boolean? = false) {
         refreshEpgJob?.cancel()
         refreshEpgJob = viewModelScope.launch {
             updateState(isProgramsLoading = true)
             try {
-                val epg = channelRepository.getEpgEntries(force)
+                val epg = getEpgEntriesUseCase(force)
                 allEpg.value = epg
 
                 val selected = _uiState.value.selectedChannel
@@ -238,7 +285,7 @@ class PlayerViewModel @Inject constructor(
                 throw e
             } catch (_: Throwable) {
                 _uiState.update { current ->
-                    if (current.selectedChannel != null) {
+                    if (current.selectedPlayableMedia != null) {
                         current.copy(isProgramsLoading = false)
                     } else {
                         current
@@ -250,23 +297,53 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun updateState(selectedChannel: Channel? = null, programs: List<EpgEntry>? = null, isProgramsLoading: Boolean? = null) {
+    private fun updateState(
+        selectedChannel: Channel? = null,
+        selectedVodItem: VodItem? = null,
+        programs: List<EpgEntry>? = null,
+        isProgramsLoading: Boolean? = null
+    ) {
         val current = _uiState.value
         val now = System.currentTimeMillis()
-
         val nextPrograms = programs ?: current.programs
 
+        val nextSelectedLive = selectedChannel ?: current.selectedChannel
+        val nextSelectedVod = selectedVodItem ?: current.selectedVodItem
+        if (nextSelectedLive == null && nextSelectedVod == null) {
+            _uiState.update { cur ->
+                cur.copy (
+                    selectedChannel = null,
+                    selectedVodItem = null,
+                    programs = emptyList(),
+                    epgNowEpochMs = now,
+                    playbackPositionMs = null,
+                    playbackDurationMs = null,
+                    liveOffsetMs = null,
+                    isBehindLive = false,
+                    isLiveStream = false,
+                    currentProgramProgressPercent = null,
+                    currentProgramElapsedMs = null,
+                    currentProgramTotalMs = null,
+                    canSeekLiveDvr = false,
+                    isProgramsLoading = false
+                )
+            }
+            return
+        }
+
         // Do not read old player/timeline values while tuning — avoids stale UI from previous channel.
-        if (current.isTuningChannel) {
+        if (current.isTuningMedia) {
             _uiState.update { cur ->
                 cur.copy(
                     selectedChannel = selectedChannel ?: cur.selectedChannel,
+                    selectedVodItem = selectedVodItem ?: cur.selectedVodItem,
                     programs = nextPrograms,
                     epgNowEpochMs = now,
                     playbackPositionMs = null,
                     playbackDurationMs = null,
                     liveOffsetMs = null,
                     isBehindLive = false,
+                    isLiveStream = false,
                     currentProgramProgressPercent = null,
                     currentProgramElapsedMs = null,
                     currentProgramTotalMs = null,
@@ -323,6 +400,7 @@ class PlayerViewModel @Inject constructor(
         _uiState.update { current ->
             current.copy(
                 selectedChannel = selectedChannel ?: current.selectedChannel,
+                selectedVodItem = selectedVodItem ?: current.selectedVodItem,
                 playbackPositionMs = playbackPos,
                 playbackDurationMs = playbackDur,
                 programs = nextPrograms,
@@ -332,19 +410,18 @@ class PlayerViewModel @Inject constructor(
                 currentProgramTotalMs = total,
                 liveOffsetMs = liveOffsetMs,
                 isBehindLive = effectiveIsBehindLive,
+                isLiveStream = isLiveStream,
                 isProgramsLoading = isProgramsLoading ?: current.isProgramsLoading,
                 canSeekLiveDvr = canSeekLiveDvr
             )
         }
     }
 
-    private fun loadChannel(channel: Channel, seekToMs: Long) {
+    private fun loadMedia(media: PlayableMedia, seekToMs: Long) {
         playerEngine.prepare(
-            channelId = channel.id,
-            url = channel.url,
+            media = media,
             playWhenReady = true,
-            seekToMs = seekToMs,
-            drm = channel.drm
+            seekToMs = seekToMs
         )
     }
 

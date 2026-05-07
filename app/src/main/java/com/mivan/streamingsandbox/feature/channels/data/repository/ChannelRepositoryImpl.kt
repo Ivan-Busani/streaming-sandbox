@@ -1,12 +1,9 @@
 package com.mivan.streamingsandbox.feature.channels.data.repository
 
 import android.content.Context
-import android.util.Log
 import com.mivan.streamingsandbox.feature.channels.domain.model.Channel
 import com.mivan.streamingsandbox.feature.channels.domain.model.StreamType
 import com.mivan.streamingsandbox.feature.channels.domain.repository.ChannelRepository
-import com.mivan.streamingsandbox.feature.player.domain.DrmConfig
-import com.mivan.streamingsandbox.feature.player.domain.DrmScheme
 import javax.inject.Inject
 import com.mivan.streamingsandbox.BuildConfig
 import com.mivan.streamingsandbox.feature.channels.data.epg.EpgRemoteDataSource
@@ -16,11 +13,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.text.Normalizer
 import java.time.LocalDate
 import androidx.core.content.edit
+import com.mivan.streamingsandbox.R
 import kotlin.math.abs
 
 class ChannelRepositoryImpl @Inject constructor(
@@ -45,7 +41,6 @@ class ChannelRepositoryImpl @Inject constructor(
     private var cachedSourceEpgUrl: String? = null
 
     private val epgBaseEpochMs = System.currentTimeMillis()
-    private val httpClient = OkHttpClient()
 
     private companion object {
         private const val TAG = "*|ChannelRepository"
@@ -66,51 +61,45 @@ class ChannelRepositoryImpl @Inject constructor(
 
         return runCatching {
             withContext(Dispatchers.IO) {
-                val request = Request.Builder()
-                    .url(BuildConfig.IPTV_SOURCE_M3U_URL)
-                    .build()
-
                 var remoteChannels: List<Channel> = emptyList()
                 val builtChannels = mutableListOf<Channel>()
                 val tvgIdToChannelId = mutableMapOf<String, String>()
 
-                httpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        error("M3U request failed: ${response.code}")
-                    }
+                val body = appContext.resources
+                    .openRawResource(R.raw.mx_live_streams_playlist)
+                    .bufferedReader()
+                    .use { it.readText() }
 
-                    val body = response.body?.string().orEmpty()
-                    if (body.isBlank()) {
-                        error("M3U body is empty")
-                    }
-                    val playlist = M3uParser.parse(body)
-                    val parsedChannels = playlist.channels
-
-                    for (m3u in parsedChannels) {
-                        val streamType = inferStreamType(m3u.url) ?: continue
-                        val id = "live-m3u-${m3u.name}-${m3u.url.hashCode()}"
-                        val channel = Channel(
-                            id = id,
-                            name = m3u.name,
-                            type = streamType,
-                            url = m3u.url,
-                            urlLogo = m3u.tvgLogo
-                        )
-                        builtChannels.add(channel)
-
-                        m3u.tvgId
-                            ?.trim()
-                            ?.lowercase()
-                            ?.takeIf { it.isNotEmpty() }
-                            ?.let { tvgIdToChannelId[it] = id }
-                    }
-
-                    // remoteChannels = builtChannels.take(REMOTE_LIMIT)
-                    remoteChannels = builtChannels
-
-                    cachedTvgIdToChannelId = tvgIdToChannelId
-                    cachedSourceEpgUrl = playlist.epgUrl
+                if (body.isBlank()) {
+                    error("M3U body is empty")
                 }
+                val playlist = M3uParser.parse(body)
+                val parsedChannels = playlist.channels
+
+                for (m3u in parsedChannels) {
+                    val streamType = inferStreamType(m3u.url) ?: continue
+                    val id = "live-m3u-${m3u.name}-${m3u.url.hashCode()}"
+                    val channel = Channel(
+                        id = id,
+                        name = m3u.name,
+                        type = streamType,
+                        url = m3u.url,
+                        urlLogo = m3u.tvgLogo
+                    )
+                    builtChannels.add(channel)
+
+                    m3u.tvgId
+                        ?.trim()
+                        ?.lowercase()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { tvgIdToChannelId[it] = id }
+                }
+
+                // remoteChannels = builtChannels.take(REMOTE_LIMIT)
+                remoteChannels = builtChannels
+
+                cachedTvgIdToChannelId = tvgIdToChannelId
+                cachedSourceEpgUrl = playlist.epgUrl
 
                 if (remoteChannels.isEmpty()) error("No playable channels parsed from M3U")
 
@@ -129,8 +118,7 @@ class ChannelRepositoryImpl @Inject constructor(
             if (throwable is CancellationException) throw throwable
 
             cachedTvgIdToChannelId = emptyMap()
-            val fallback = fallbackChannels()
-            cachedChannels = fallback
+            cachedChannels = emptyList()
             cachedChannelsAtEpochMs = now
 
             // Invalidate mapped EPG cache when channel set changes
@@ -139,12 +127,12 @@ class ChannelRepositoryImpl @Inject constructor(
             cachedMappedEpgForChannelsEpochMs = Long.MIN_VALUE
             cachedSourceEpgUrl = null
 
-            return fallback
+            return emptyList()
         }
     }
 
     override suspend fun getEpgEntries(force: Boolean?): List<EpgEntry> {
-        val channels = cachedChannels ?: fallbackChannels()
+        val channels = cachedChannels ?: emptyList()
         val now = System.currentTimeMillis()
 
         force?.let {
@@ -205,33 +193,6 @@ class ChannelRepositoryImpl @Inject constructor(
             }
         }
     }
-
-    private fun fallbackChannels(): List<Channel> = listOf(
-        Channel(
-            id = "1",
-            name = "Tears of Steel HLS",
-            type = StreamType.HLS,
-            url = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
-        ),
-        Channel(
-            id = "2",
-            name = "Tears of Steel DASH",
-            type = StreamType.DASH,
-            url = "https://storage.googleapis.com/wvmedia/clear/h264/tears/tears.mpd"
-        ),
-        Channel(
-            id = "3",
-            name = "Demo DRM Widevine",
-            type = StreamType.DASH,
-            url = "https://storage.googleapis.com/wvmedia/cenc/h264/tears/tears.mpd",
-            drm = DrmConfig(
-                scheme = DrmScheme.WIDEVINE,
-                licenseUrl = BuildConfig.WIDEVINE_LICENSE_URL,
-                headers = emptyMap(),
-                multiSession = false
-            )
-        )
-    )
 
     private fun inferStreamType(url: String): StreamType? {
         val normalized = url.lowercase()

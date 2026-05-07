@@ -1,6 +1,6 @@
 # StreamingSandbox — handoff para retomar
 
-**Fecha de referencia:** 2026-05-05
+**Fecha de referencia:** 2026-05-07
 
 ## Objetivo general
 
@@ -122,3 +122,28 @@ Si hay errores masivos (`Unresolved reference: androidx`, metadata Kotlin incomp
 ## Cómo retomar en un chat nuevo
 
 Adjunta este archivo o pega su contenido y pide: *«Continúa desde SESSION_HANDOFF.md»*.
+
+## Corte de sesión (2026-05-07)
+
+### Cambios aplicados en esta ronda
+
+- ☑ **Media selector en portrait:** se corrigió para que la lista vertical ocupe el alto disponible completo (se eliminó el límite fijo de altura en `LazyColumn` y se propagó `Modifier.weight(1f)` desde el contenedor).
+- ☑ **Player fullscreen real en layout Compose:** se removió padding estructural que comprimía el área de video (`PlayerScreen` sin `Scaffold` con `innerPadding` sobre el `ModalNavigationDrawer`).
+- ☑ **Ocultamiento de status bar / insets:** se agregó manejo de insets en `MainActivity` con `WindowInsetsControllerCompat` y reaplicación en `ON_RESUME`.
+- ☑ **Fullscreen en ambas orientaciones:** la lógica quedó unificada para ocultar barra de estado en portrait y landscape.
+- ☑ **Fondo negro base:** se envolvió la raíz de Compose en un `Box` con `background(Color.Black)` para evitar flashes/blancos de fondo durante transiciones del sistema.
+- ☑ **Dark mode forzado:** `StreamingSandboxTheme` ahora usa `darkTheme = true` por defecto (independiente del modo del sistema).
+- ☑ **Slider de VOD (track activo):** se corrigió el color aparente azul; el `track` custom del `Slider` ahora recibe `colors = sliderColors`, por lo que respeta `activeTrackColor = Color.Red`.
+- ☑ **Overlay selector (backdrop):** se añadió opacidad al fondo (`Color.Black.copy(alpha = 0.45f)`) para mejorar contraste.
+
+### Archivos tocados en esta ronda
+
+- `app/src/main/java/com/mivan/streamingsandbox/MainActivity.kt`
+- `app/src/main/java/com/mivan/streamingsandbox/feature/player/presentation/ui/PlayerScreen.kt`
+- `app/src/main/java/com/mivan/streamingsandbox/feature/player/presentation/ui/PlayerOverlays.kt`
+- `app/src/main/java/com/mivan/streamingsandbox/ui/theme/Theme.kt`
+
+### Notas para la siguiente sesión
+
+- Si en algún dispositivo la barra de estado reaparece intermitente, reforzar ocultamiento con estrategia por `onWindowFocusChanged` en `Activity` además de `ON_RESUME`.
+- Si se quiere inmersivo total (status + navigation bar), cambiar ocultamiento de `statusBars()` a `systemBars()` en el bloque de insets.

@@ -1,6 +1,7 @@
 package com.mivan.streamingsandbox.feature.player.domain
 
 import android.view.View
+import com.mivan.streamingsandbox.feature.player.presentation.PlayableMedia
 import kotlinx.coroutines.flow.StateFlow
 
 sealed class PlayerEngineState {
@@ -19,11 +20,9 @@ interface PlayerEngine {
     fun attachView(view: View)
     fun detachView(view: View)
     fun prepare(
-        channelId: String,
-        url: String,
+        media: PlayableMedia,
         playWhenReady: Boolean = true,
         seekToMs: Long = 0L,
-        drm: DrmConfig? = null
     )
     fun play()
     fun pause()
@@ -31,6 +30,7 @@ interface PlayerEngine {
     fun isLiveDvrSeekable(): Boolean
     fun seekBack()
     fun seekForward()
+    fun seekTo(positionMs: Long)
     fun seekToLiveEdge()
     fun liveOffsetMs(): Long?
     fun durationMs(): Long

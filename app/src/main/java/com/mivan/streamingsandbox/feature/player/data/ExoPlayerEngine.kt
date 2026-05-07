@@ -17,6 +17,7 @@ import com.mivan.streamingsandbox.feature.player.domain.DrmScheme
 import com.mivan.streamingsandbox.feature.player.domain.PlaybackMetrics
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngine
 import com.mivan.streamingsandbox.feature.player.domain.PlayerEngineState
+import com.mivan.streamingsandbox.feature.player.presentation.PlayableMedia
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -157,7 +158,10 @@ class ExoPlayerEngine @Inject constructor(
         }
     }
 
-    override fun prepare(channelId: String, url: String, playWhenReady: Boolean, seekToMs: Long, drm: DrmConfig?) = runOnMain {
+    override fun prepare(media: PlayableMedia, playWhenReady: Boolean, seekToMs: Long) = runOnMain {
+        val mediaId = media.id()
+        val mediaUrl = media.url()
+        val drm = media.drm()
         val p = ensurePlayer()
 
         loadStartMs = System.currentTimeMillis()
@@ -165,12 +169,12 @@ class ExoPlayerEngine @Inject constructor(
         val currentFatalErrors = _metrics.value.fatalErrorCount
         _metrics.value = PlaybackMetrics()
 
-        if (channelId == lastChannelId) {
+        if (mediaId == lastChannelId) {
             _metrics.value = _metrics.value.copy(
                 fatalErrorCount = currentFatalErrors
             )
         } else {
-            lastChannelId = channelId
+            lastChannelId = mediaId
         }
 
         _state.value = PlayerEngineState.Idle
@@ -178,7 +182,7 @@ class ExoPlayerEngine @Inject constructor(
         p.clearMediaItems()
 
         val mediaItemBuilder = MediaItem.Builder()
-            .setUri(url)
+            .setUri(mediaUrl)
 
         if (drm != null) {
             val schemeUuid = when (drm.scheme) {
@@ -253,6 +257,11 @@ class ExoPlayerEngine @Inject constructor(
         }
     }
 
+    override fun seekTo(positionMs: Long) = runOnMain {
+        val target = positionMs.coerceAtLeast(0L)
+        player?.seekTo(target)
+    }
+
     override fun seekToLiveEdge() = runOnMain { player?.seekToDefaultPosition() }
 
     override fun liveOffsetMs(): Long? {
@@ -306,4 +315,19 @@ class ExoPlayerEngine @Inject constructor(
             _state.value = PlayerEngineState.Idle
         }
     }
+}
+
+private fun PlayableMedia.id(): String = when (this) {
+    is PlayableMedia.Live -> channel.id
+    is PlayableMedia.Vod -> item.id
+}
+
+private fun PlayableMedia.url(): String = when (this) {
+    is PlayableMedia.Live -> channel.url
+    is PlayableMedia.Vod -> item.url
+}
+
+private fun PlayableMedia.drm(): DrmConfig? = when (this) {
+    is PlayableMedia.Live -> channel.drm
+    is PlayableMedia.Vod -> item.drm
 }

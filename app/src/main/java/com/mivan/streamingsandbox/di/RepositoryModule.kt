@@ -2,6 +2,8 @@ package com.mivan.streamingsandbox.di
 
 import com.mivan.streamingsandbox.feature.channels.data.repository.ChannelRepositoryImpl
 import com.mivan.streamingsandbox.feature.channels.domain.repository.ChannelRepository
+import com.mivan.streamingsandbox.feature.vod.data.repository.VodRepositoryImpl
+import com.mivan.streamingsandbox.feature.vod.domain.repository.VodRepository
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -17,4 +19,10 @@ abstract class RepositoryModule {
     abstract fun bindChannelRepository(
         impl: ChannelRepositoryImpl
     ): ChannelRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindVodRepository(
+        impl: VodRepositoryImpl
+    ): VodRepository
 }

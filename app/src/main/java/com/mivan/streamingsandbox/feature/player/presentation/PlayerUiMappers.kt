@@ -2,7 +2,6 @@ package com.mivan.streamingsandbox.feature.player.presentation
 
 import androidx.compose.ui.graphics.Color
 
-private const val LIVE_FALLBACK_BEHIND_PROGRESS = 0.35f
 private const val LIVE_EDGE_PROGRESS = 1f
 
 data class BottomControlsUiModel(
@@ -10,9 +9,12 @@ data class BottomControlsUiModel(
     /** Play/pause/seek enabled (false when playback error). */
     val controlsEnabled: Boolean,
     val showPlayPauseAsPause: Boolean,
+    val showSeekControls: Boolean,
     val canSeekDvr: Boolean,
-    val showProgramLoading: Boolean,
+    val showTimeLabel: Boolean,
     val timeLabel: String,
+    val seekPositionMs: Long?,
+    val seekDurationMs: Long?,
     val progressValue: Float,
     val progressColor: Color,
     val liveButtonEnabled: Boolean,
@@ -22,17 +24,19 @@ data class BottomControlsUiModel(
 fun PlayerUiState.toBottomControlsUiModel(
     formatDuration: (Long?) -> String
 ): BottomControlsUiModel {
-    val hasChannel = selectedChannel != null
+    val hasChannel = selectedPlayableMedia != null
     val isError = playbackState is PlaybackUiState.Error
     val isBuffering = playbackState == PlaybackUiState.Buffering
-    // Include any buffering (tuning or mid-playback rebuffer) so UI stays neutral, not LIVE.
+    val isBufferingLiveMedia = isBuffering && isLiveStream
     val neutralLikeNoChannel =
-        (!hasChannel || isTuningChannel || isBuffering) && !isError
+        (!hasChannel || isTuningMedia || isBufferingLiveMedia) && !isError
 
     val elapsed = currentProgramElapsedMs ?: playbackPositionMs
     val total = currentProgramTotalMs ?: playbackDurationMs
 
     val hasKnownDuration = hasChannel && elapsed != null && total != null && total > 0L
+    val isActiveLiveMedia = hasChannel && isLiveStream && !isError
+    val isVodTimeline = hasKnownDuration && !isLiveStream && !isError && !isTuningMedia
 
     val progressFromEpg = currentProgramProgressPercent
         ?.coerceIn(0, 100)
@@ -41,55 +45,48 @@ fun PlayerUiState.toBottomControlsUiModel(
     val progressValue = when {
         neutralLikeNoChannel -> 0f
         isError -> 0f
+        isActiveLiveMedia -> LIVE_EDGE_PROGRESS
         progressFromEpg != null -> progressFromEpg
         hasKnownDuration -> {
             (elapsed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
         }
-        isBehindLive -> LIVE_FALLBACK_BEHIND_PROGRESS
-        else -> LIVE_EDGE_PROGRESS
+        else -> 0f
     }
 
     val progressColor = when {
         neutralLikeNoChannel -> Color.DarkGray
         isError -> Color.Gray          // playback error
-        isBehindLive -> Color.Cyan     // delayed vs live edge
         else -> Color.Red              // at live edge / normal live indicator
     }
 
-    val timeLabel = when {
-        neutralLikeNoChannel -> "--:--"
-        isError -> "--:--"
-        hasKnownDuration -> "${formatDuration(elapsed)} / ${formatDuration(total)}"
-        isBehindLive -> when (liveOffsetMs) {
-            null -> "LIVE -"
-            else -> "-${formatDuration(liveOffsetMs)}"
-        }
-        else -> "LIVE"
+    val timeLabel = if (isVodTimeline) {
+        "${formatDuration(elapsed)} / ${formatDuration(total)}"
+    } else {
+        "--:--"
     }
 
     val liveBadgeText = when {
         isError -> "ERROR"
-        isTuningChannel -> "--"
+        isTuningMedia -> "--"
         isBuffering -> "--"
-        isBehindLive -> when (liveOffsetMs) {
-            null -> "LIVE -"
-            else -> "-${formatDuration(liveOffsetMs)}"
-        }
         else -> "LIVE"
     }
 
-    val controlsEnabled = hasChannel && !isError && !isTuningChannel
+    val controlsEnabled = hasChannel && !isError && !isTuningMedia
 
     return BottomControlsUiModel(
         hasChannel = hasChannel,
         controlsEnabled = controlsEnabled,
-        showPlayPauseAsPause = !isTuningChannel && (
+        showPlayPauseAsPause = !isTuningMedia && (
             playbackState == PlaybackUiState.Playing ||
                 playbackState == PlaybackUiState.Buffering
             ),
-        canSeekDvr = canSeekLiveDvr && !isError && !isTuningChannel,
-        showProgramLoading = isProgramsLoading || (hasChannel && isBuffering),
+        showSeekControls = isVodTimeline,
+        canSeekDvr = isVodTimeline && canSeekLiveDvr,
+        showTimeLabel = isVodTimeline,
         timeLabel = timeLabel,
+        seekPositionMs = if (isVodTimeline) elapsed else null,
+        seekDurationMs = if (isVodTimeline) total else null,
         progressValue = progressValue,
         progressColor = progressColor,
         liveButtonEnabled = controlsEnabled,

@@ -71,6 +71,7 @@ fun SidebarDrawerContent(
                     currentProgramProgressPercent = uiState.currentProgramProgressPercent
                 )
             }
+
             // MetricsSection(metrics = uiState.metrics)
 
             if (uiState.playbackState is PlaybackUiState.Error) {
@@ -160,7 +161,11 @@ private fun ProgramTimelineSection(
             enabled = !isProgramLoading,
             modifier = Modifier.size(24.dp)
         ) {
-            Icon(imageVector = Icons.Outlined.Refresh, contentDescription = "Actualizar programación")
+            Icon(
+                imageVector = Icons.Outlined.Refresh,
+                contentDescription = "Actualizar programación",
+                tint = if (isProgramLoading) Color.Gray else Color.White
+            )
         }
     }
 

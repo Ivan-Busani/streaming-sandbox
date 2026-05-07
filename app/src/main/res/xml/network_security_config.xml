@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Cleartext HTTP only for hosts used in mx_live_streams_playlist.m3u -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">animezonetv.net</domain>
+        <domain includeSubdomains="false">185.56.109.253</domain>
+        <domain includeSubdomains="false">201.217.246.42</domain>
+    </domain-config>
+</network-security-config>
